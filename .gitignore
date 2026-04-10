@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Secrets and local config
+.env
+.streamlit/secrets.toml
+
+# Runtime state
+*.db
+*.sqlite
+*.log
+
+# Notebooks and local tooling
+.ipynb_checkpoints/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
