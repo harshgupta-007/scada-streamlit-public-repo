@@ -6,7 +6,7 @@ from utils.charts import get_peak_info, block_to_time,calculate_regional_contrib
 
 
 # -----------------------------
-# 🔹 Build Intraday Summary
+#  Build Intraday Summary
 # -----------------------------
 def build_intraday_summary(df):
     df['date'] = pd.to_datetime(df['date'])
@@ -106,6 +106,6 @@ def build_weather_summary(df, zone):
     Weather & Demand Summary for {zone}:
     
     Average Demand: {avg_demand:.0f} MW
-    Average Temperature: {avg_temp:.1f} °C
+    Average Temperature: {avg_temp:.1f} C
     Demand-Temperature Correlation: {correlation:.2f}{flags_text}
     """

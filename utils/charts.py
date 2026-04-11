@@ -64,7 +64,7 @@ def plot_regional_trend(df: pd.DataFrame):
 
     region_cols = ['CZ_Demand', 'EZ_Demand', 'WZ_Demand', 'demand_energy']
 
-    # ✅ Aggregate to ONE value per date
+    #  Aggregate to ONE value per date
     df_daily = df.groupby('date')[region_cols].sum().reset_index()
 
     # Melt
@@ -174,7 +174,7 @@ def get_peak_info(df: pd.DataFrame):
     if df.empty:
         return None
 
-    # 🔥 Find actual peak row (NOT aggregated)
+    #  Find actual peak row (NOT aggregated)
     peak_row = df.loc[df['demand_energy'].idxmax()]
     min_row = df.loc[df['demand_energy'].idxmin()]
 
@@ -204,11 +204,11 @@ def generate_intraday_insights(df):
     min_date = pd.to_datetime(info['min_date']).strftime("%d %b %Y")
 
     return f"""
-    🔥 Peak demand of {info['peak_value']:.0f} MW observed on {peak_date} at {peak_time} (Block {info['peak_block']}).
+   Peak demand of {info['peak_value']:.0f} MW observed on {peak_date} at {peak_time} (Block {info['peak_block']}).
 
-    🌙 Minimum demand of {info['min_value']:.0f} MW observed on {min_date} at {min_time} (Block {info['min_block']}).
+   Minimum demand of {info['min_value']:.0f} MW observed on {min_date} at {min_time} (Block {info['min_block']}).
 
-    ⚡ Significant ramp-up likely occurs before peak hours — important for scheduling.
+   Significant ramp-up likely occurs before peak hours and is important for scheduling.
     """
 def calculate_regional_contribution(df: pd.DataFrame):
     if df.empty:
@@ -269,11 +269,11 @@ def generate_regional_insights(df: pd.DataFrame):
     dominant_region = max(contributions, key=contributions.get)
 
     return f"""
-    🌍 {dominant_region} region is contributing the highest demand ({contributions[dominant_region]:.1f}%).
+     {dominant_region} region is contributing the highest demand ({contributions[dominant_region]:.1f}%).
 
-    📊 Regional demand distribution is relatively {'balanced' if max(contributions.values()) < 50 else 'skewed'}.
+     Regional demand distribution is relatively {'balanced' if max(contributions.values()) < 50 else 'skewed'}.
 
-    ⚡ Monitoring dominant regions is critical for load management and infrastructure planning.
+     Monitoring dominant regions is critical for load management and infrastructure planning.
     """
 
 # Step 3.1: Variability Calculation
@@ -334,14 +334,14 @@ def generate_variability_insights(df: pd.DataFrame):
         risk_level = "Moderate"
 
     return f"""
-    ⚠️ {max_region} shows highest variability — requires close monitoring.
+     {max_region} shows the highest variability and requires close monitoring.
 
-    📊 Overall system variability is {risk_level} (CV = {overall_cv:.2f}).
+     Overall system variability is {risk_level} (CV = {overall_cv:.2f}).
 
-    ⚡ High variability can impact forecasting accuracy and increase procurement cost.
+     High variability can impact forecasting accuracy and increase procurement cost.
     """
 
-##⚡ Step 4: Ramp Analysis (🔥 High Impact)
+## Step 4: Ramp Analysis
 
 def get_ramp_profile(df: pd.DataFrame):
     df_ramp = calculate_ramp(df)
@@ -405,11 +405,11 @@ def generate_ramp_insights(df: pd.DataFrame):
     max_down_block = df_ramp.loc[df_ramp['ramp'].idxmin(), 'block_no']
 
     return f"""
-    ⚡ Maximum ramp-up of {max_ramp_up:.0f} MW observed at block {int(max_up_block)}.
+     Maximum ramp-up of {max_ramp_up:.0f} MW observed at block {int(max_up_block)}.
 
-    🔻 Maximum ramp-down of {max_ramp_down:.0f} MW observed at block {int(max_down_block)}.
+     Maximum ramp-down of {max_ramp_down:.0f} MW observed at block {int(max_down_block)}.
 
-    ⚠️ High ramp rates indicate need for flexible generation (hydro/gas) to maintain grid stability.
+     High ramp rates indicate need for flexible generation (hydro/gas) to maintain grid stability.
     """
 
 
@@ -439,7 +439,7 @@ def detect_anomalies(df: pd.DataFrame, threshold=3):
 def plot_demand_with_anomalies(df: pd.DataFrame):
     df = df.copy()
 
-    # 🔥 Aggregate to daily level
+    #  Aggregate to daily level
     df_daily = df.groupby('date')['demand_energy'].sum().reset_index()
 
     # Detect anomalies on daily data
@@ -453,7 +453,7 @@ def plot_demand_with_anomalies(df: pd.DataFrame):
         markers=True
     )
 
-    # 🔴 Highlight anomalies
+    #  Highlight anomalies
     anomalies = df_daily[df_daily['anomaly']]
 
     fig.add_scatter(
@@ -477,7 +477,7 @@ def generate_anomaly_insights(df: pd.DataFrame):
     anomalies = df_anomaly[df_anomaly['anomaly']]
 
     if anomalies.empty:
-        return "✅ No significant anomalies detected. Demand pattern is stable."
+        return " No significant anomalies detected. Demand pattern is stable."
 
     # Get top anomaly
     top = anomalies.iloc[0]
@@ -488,9 +488,9 @@ def generate_anomaly_insights(df: pd.DataFrame):
     value = top['demand_energy']
 
     return f"""
-    🚨 Anomaly detected: Demand reached {value:.0f} MW on {date} at {time} (Block {block}).
+     Anomaly detected: Demand reached {value:.0f} MW on {date} at {time} (Block {block}).
 
-    ⚠️ Such deviations may indicate abnormal load behavior or data irregularities.
+     Such deviations may indicate abnormal load behavior or data irregularities.
     """
 
 
@@ -525,7 +525,7 @@ def plot_intraday_with_anomalies(df: pd.DataFrame):
         markers=True
     )
 
-    # 🔴 Highlight anomalies
+    #  Highlight anomalies
     anomalies = df_anomaly[df_anomaly['anomaly']]
 
     fig.add_scatter(
@@ -547,7 +547,7 @@ def generate_intraday_anomaly_insights(df: pd.DataFrame):
     anomalies = df_anomaly[df_anomaly['anomaly']]
 
     if anomalies.empty:
-        return "✅ No intraday anomalies detected. Demand pattern is smooth."
+        return "No intraday anomalies detected. Demand pattern is smooth."
 
     insights = []
 
@@ -557,7 +557,7 @@ def generate_intraday_anomaly_insights(df: pd.DataFrame):
         value = row['demand_energy']
 
         insights.append(
-            f"🚨 Anomaly at {time} (Block {block}) – demand = {value:.0f} MW"
+            f"Anomaly at {time} (Block {block}): demand = {value:.0f} MW"
         )
 
     return "\n".join(insights[:5])  # limit to top 5
