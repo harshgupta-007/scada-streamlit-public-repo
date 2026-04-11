@@ -4,17 +4,18 @@ import pandas as pd
 from utils.data_loader import get_daily_aggregations,get_intraday_profile
 
 def plot_demand_trend(df: pd.DataFrame):
-    """Plots the total daily demand energy over time."""
+    """Plot total daily demand energy in GWh."""
     if df.empty:
         return None
     daily_demand = get_daily_aggregations(df)
-    
+    daily_demand['demand_energy_gwh'] = daily_demand['demand_energy'] * 0.25 / 1000
+
     fig = px.line(
-        daily_demand, 
-        x='date', 
-        y='demand_energy', 
+        daily_demand,
+        x='date',
+        y='demand_energy_gwh',
         title='Total Daily Demand Energy Over Time',
-        labels={'demand_energy': 'Total Demand (MWh)', 'date': 'Date'}
+        labels={'demand_energy_gwh': 'Total Energy (GWh)', 'date': 'Date'}
     )
     fig.update_layout(template='plotly_white', hovermode='x unified')
     return fig
@@ -64,7 +65,7 @@ def plot_regional_trend(df: pd.DataFrame):
 
     region_cols = ['CZ_Demand', 'EZ_Demand', 'WZ_Demand', 'demand_energy']
 
-    #  Aggregate to ONE value per date
+    # Aggregate to one value per date.
     df_daily = df.groupby('date')[region_cols].sum().reset_index()
 
     # Melt
@@ -89,20 +90,20 @@ def plot_regional_trend(df: pd.DataFrame):
     return fig
 
 def plot_generation_mix(df: pd.DataFrame):
-    """Plots an area chart of the generation mix over time."""
+    """Plot daily generation mix in GWh."""
     if df.empty:
         return None
-        
+
     gen_cols = ['thermal_gen', 'hydel_gen', 'renewable_gen']
-    # Sum up generation per day directly from the daily sum 
-    # (or sum it if plotting raw blocks, but area chart usually makes more sense daily)
     daily_gen = get_daily_aggregations(df)
-    
+
     fig = go.Figure()
     for col in gen_cols:
+        if col not in daily_gen.columns:
+            continue
         fig.add_trace(go.Scatter(
-            x=daily_gen['date'], 
-            y=daily_gen[col],
+            x=daily_gen['date'],
+            y=daily_gen[col] * 0.25 / 1000,
             mode='lines',
             name=col.replace('_', ' ').title(),
             stackgroup='one'
@@ -111,7 +112,7 @@ def plot_generation_mix(df: pd.DataFrame):
     fig.update_layout(
         title='Total Generation Mix Over Time',
         xaxis_title='Date',
-        yaxis_title='Generation (MWh)',
+        yaxis_title='Generation (GWh)',
         template='plotly_white',
         hovermode='x unified'
     )
@@ -477,7 +478,7 @@ def generate_anomaly_insights(df: pd.DataFrame):
     anomalies = df_anomaly[df_anomaly['anomaly']]
 
     if anomalies.empty:
-        return " No significant anomalies detected. Demand pattern is stable."
+        return "No significant anomalies detected. Demand pattern is stable."
 
     # Get top anomaly
     top = anomalies.iloc[0]
