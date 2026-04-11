@@ -22,6 +22,7 @@ from utils.charts import (
     plot_variability,
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data
+from utils.agent_chat import ask_scada_agent, is_agent_chat_configured
 from utils.insights import generate_master_insights
 from utils.kpi_cards import render_kpi_cards
 
@@ -36,7 +37,6 @@ AVAILABLE_PAGES = [
 ]
 DEFERRED_PAGES = [
     "Weather Correlation",
-    "Agent Chat",
 ]
 
 
@@ -54,7 +54,10 @@ def build_sidebar(df):
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Navigation")
-    page = st.sidebar.radio("Select View", AVAILABLE_PAGES, label_visibility="collapsed")
+    pages = AVAILABLE_PAGES.copy()
+    if is_agent_chat_configured():
+        pages.append("Agent Chat")
+    page = st.sidebar.radio("Select View", pages, label_visibility="collapsed")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Global Filters")
@@ -133,6 +136,8 @@ def main():
         render_generation()
     elif page == "Intraday Profile":
         render_intraday()
+    elif page == "Agent Chat":
+        render_agent_chat()
 
 
 def render_overview():
@@ -250,6 +255,50 @@ def render_intraday():
     if fig_anomaly:
         st.plotly_chart(fig_anomaly, use_container_width=True)
     st.warning(generate_intraday_anomaly_insights(df_intraday))
+
+
+def render_agent_chat():
+    st.header("SCADA Agent Chat")
+    st.markdown(
+        "Ask questions about the currently selected sample dataset. "
+        "This chat does not access live SCADA systems or private databases."
+    )
+
+    df = st.session_state.get("filtered_df")
+    if df is None or df.empty:
+        st.info("Please select a valid date range containing data before using Agent Chat.")
+        return
+
+    if not is_agent_chat_configured():
+        st.warning("Agent Chat is not configured. Add GOOGLE_API_KEY in Streamlit secrets to enable it.")
+        return
+
+    if "agent_messages" not in st.session_state:
+        st.session_state["agent_messages"] = [
+            {
+                "role": "assistant",
+                "content": "Ask me about demand peaks, regional contribution, generation mix, ramps, or anomalies in the selected sample data.",
+            }
+        ]
+
+    for message in st.session_state["agent_messages"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    prompt = st.chat_input("Ask about the selected SCADA sample data...")
+    if not prompt:
+        return
+
+    st.session_state["agent_messages"].append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Analyzing selected SCADA data..."):
+            response = ask_scada_agent(prompt, df, st.session_state["agent_messages"])
+        st.markdown(response)
+
+    st.session_state["agent_messages"].append({"role": "assistant", "content": response})
 
 
 if __name__ == "__main__":
