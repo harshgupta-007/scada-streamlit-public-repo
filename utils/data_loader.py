@@ -6,6 +6,7 @@ import streamlit as st
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_FILE = BASE_DIR / "data" / "sample_scada.csv"
+WEATHER_FILE = BASE_DIR / "data" / "mp_weather_96_blocks_nov_2025.csv"
 
 
 @st.cache_data(ttl=3600)
@@ -137,17 +138,57 @@ def get_intraday_profile(df: pd.DataFrame):
 
 @st.cache_data(ttl=3600)
 def load_weather_mapping() -> pd.DataFrame:
-    """Weather is deferred for Phase 1 public deployment."""
+    """Weather mapping is not required for the public CSV weather sample."""
     return pd.DataFrame()
 
 
 @st.cache_data(ttl=3600)
-def load_weather_data() -> pd.DataFrame:
-    """Weather is deferred for Phase 1 public deployment."""
-    return pd.DataFrame()
+def load_weather_data(filepath: Union[Path, str] = WEATHER_FILE) -> pd.DataFrame:
+    """Load and aggregate the public Open-Meteo 96-block weather sample."""
+    weather_path = Path(filepath)
+    if not weather_path.exists():
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(weather_path)
+        required_cols = {
+            "date",
+            "block",
+            "temperature_2m",
+            "relativehumidity_2m",
+            "windspeed_10m",
+            "apparent_temperature",
+            "precipitation",
+        }
+        if not required_cols.issubset(df.columns):
+            return pd.DataFrame()
+
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.rename(columns={"block": "block_no"})
+
+        weather_cols = [
+            "temperature_2m",
+            "relativehumidity_2m",
+            "windspeed_10m",
+            "apparent_temperature",
+            "precipitation",
+        ]
+        for col in weather_cols:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        return df.groupby(["date", "block_no"], as_index=False)[weather_cols].mean()
+    except Exception as exc:
+        st.warning(f"Could not load weather sample data: {exc}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=3600)
 def get_merged_scada_weather() -> pd.DataFrame:
-    """Return an empty dataframe until the secure weather backend is added."""
-    return pd.DataFrame()
+    """Merge SCADA sample data with public Open-Meteo weather sample data."""
+    df_scada = load_scada_data()
+    df_weather = load_weather_data()
+
+    if df_scada.empty or df_weather.empty:
+        return pd.DataFrame()
+
+    return df_scada.merge(df_weather, on=["date", "block_no"], how="left")

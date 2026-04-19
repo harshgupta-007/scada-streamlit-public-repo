@@ -20,8 +20,11 @@ from utils.charts import (
     plot_regional_distribution,
     plot_regional_trend,
     plot_variability,
+    plot_weather_demand_scatter,
+    plot_intraday_weather_overlay,
+    build_weather_correlation_summary,
 )
-from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data
+from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
 from utils.agent_chat import ask_scada_agent, is_agent_chat_configured
 from utils.insights import generate_master_insights
 from utils.kpi_cards import render_kpi_cards
@@ -34,9 +37,9 @@ AVAILABLE_PAGES = [
     "Regional Analysis",
     "Generation Mix",
     "Intraday Profile",
+    "Weather Correlation",
 ]
 DEFERRED_PAGES = [
-    "Weather Correlation",
 ]
 
 
@@ -136,6 +139,8 @@ def main():
         render_generation()
     elif page == "Intraday Profile":
         render_intraday()
+    elif page == "Weather Correlation":
+        render_weather_correlation()
     elif page == "Agent Chat":
         render_agent_chat()
 
@@ -255,6 +260,59 @@ def render_intraday():
     if fig_anomaly:
         st.plotly_chart(fig_anomaly, use_container_width=True)
     st.warning(generate_intraday_anomaly_insights(df_intraday))
+
+
+def render_weather_correlation():
+    st.header("Weather Correlation")
+    st.markdown("Analyze how public Open-Meteo sample weather aligns with SCADA demand.")
+
+    df = get_merged_scada_weather()
+    if df.empty:
+        st.warning("Weather sample data is unavailable.")
+        return
+
+    start_date = st.session_state.get("start_date")
+    end_date = st.session_state.get("end_date")
+    if start_date and end_date:
+        df = filter_data_by_date(df, start_date, end_date)
+
+    if st.session_state.get("exclude_weekends", False) and "is_weekend" in df.columns:
+        df = df[~df["is_weekend"]]
+    if st.session_state.get("exclude_holidays", False) and "is_holiday" in df.columns:
+        df = df[~df["is_holiday"]]
+    if st.session_state.get("exclude_events", False) and "is_special_event" in df.columns:
+        df = df[~df["is_special_event"]]
+
+    if df.empty:
+        st.info("No weather and demand records remain after the selected filters.")
+        return
+
+    weather_options = {
+        "Temperature": "temperature_2m",
+        "Relative Humidity": "relativehumidity_2m",
+        "Wind Speed": "windspeed_10m",
+        "Apparent Temperature": "apparent_temperature",
+        "Precipitation": "precipitation",
+    }
+    selected_label = st.selectbox("Weather variable", list(weather_options.keys()))
+    weather_col = weather_options[selected_label]
+
+    st.info(build_weather_correlation_summary(df, weather_col))
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig_scatter = plot_weather_demand_scatter(df, weather_col)
+        if fig_scatter:
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.warning("Could not build the daily weather-demand scatter chart.")
+
+    with col2:
+        fig_overlay = plot_intraday_weather_overlay(df, weather_col)
+        if fig_overlay:
+            st.plotly_chart(fig_overlay, use_container_width=True)
+        else:
+            st.warning("Could not build the intraday weather overlay chart.")
 
 
 def render_agent_chat():

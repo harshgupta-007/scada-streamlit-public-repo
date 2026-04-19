@@ -728,3 +728,104 @@ def plot_weather_heatmap(df: pd.DataFrame, zone='WZ'):
     )
     fig.update_layout(template='plotly_white')
     return fig
+
+
+def plot_weather_demand_scatter(df: pd.DataFrame, weather_col="temperature_2m"):
+    """Plot daily average demand against a selected weather variable."""
+    if df.empty or weather_col not in df.columns:
+        return None
+
+    daily_df = df.groupby("date")[["demand_energy", weather_col]].mean().reset_index()
+    if daily_df.empty:
+        return None
+
+    labels = {
+        "demand_energy": "Average Demand (MW)",
+        "temperature_2m": "Temperature (deg C)",
+        "relativehumidity_2m": "Relative Humidity (%)",
+        "windspeed_10m": "Wind Speed (km/h)",
+        "apparent_temperature": "Apparent Temperature (deg C)",
+        "precipitation": "Precipitation (mm)",
+    }
+
+    fig = px.scatter(
+        daily_df,
+        x=weather_col,
+        y="demand_energy",
+        trendline="ols",
+        title=f"Daily Demand vs {labels.get(weather_col, weather_col)}",
+        labels=labels,
+        template="plotly_white",
+    )
+    return fig
+
+
+def plot_intraday_weather_overlay(df: pd.DataFrame, weather_col="temperature_2m"):
+    """Plot average intraday demand and weather profile on dual axes."""
+    if df.empty or weather_col not in df.columns:
+        return None
+
+    profile = df.groupby("block_no")[["demand_energy", weather_col]].mean().reset_index()
+    if profile.empty:
+        return None
+
+    weather_labels = {
+        "temperature_2m": "Temperature (deg C)",
+        "relativehumidity_2m": "Relative Humidity (%)",
+        "windspeed_10m": "Wind Speed (km/h)",
+        "apparent_temperature": "Apparent Temperature (deg C)",
+        "precipitation": "Precipitation (mm)",
+    }
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Scatter(x=profile["block_no"], y=profile["demand_energy"], name="Demand (MW)", line=dict(width=2)),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=profile["block_no"],
+            y=profile[weather_col],
+            name=weather_labels.get(weather_col, weather_col),
+            line=dict(width=2, dash="dot"),
+        ),
+        secondary_y=True,
+    )
+    fig.update_layout(
+        title=f"Intraday Demand vs {weather_labels.get(weather_col, weather_col)}",
+        template="plotly_white",
+        hovermode="x unified",
+    )
+    fig.update_yaxes(title_text="Demand (MW)", secondary_y=False)
+    fig.update_yaxes(title_text=weather_labels.get(weather_col, weather_col), secondary_y=True)
+    return fig
+
+
+def build_weather_correlation_summary(df: pd.DataFrame, weather_col="temperature_2m"):
+    """Return a compact weather-demand correlation summary."""
+    if df.empty or weather_col not in df.columns:
+        return "Weather data is unavailable for the selected range."
+
+    valid_df = df[["demand_energy", weather_col]].dropna()
+    if len(valid_df) < 2:
+        return "Not enough overlapping weather and demand data for correlation."
+
+    corr = valid_df["demand_energy"].corr(valid_df[weather_col])
+    avg_weather = valid_df[weather_col].mean()
+    avg_demand = valid_df["demand_energy"].mean()
+
+    label = {
+        "temperature_2m": "temperature",
+        "relativehumidity_2m": "relative humidity",
+        "windspeed_10m": "wind speed",
+        "apparent_temperature": "apparent temperature",
+        "precipitation": "precipitation",
+    }.get(weather_col, weather_col)
+
+    strength = "strong" if abs(corr) >= 0.6 else "moderate" if abs(corr) >= 0.3 else "weak"
+    direction = "positive" if corr >= 0 else "negative"
+
+    return (
+        f"Average demand is {avg_demand:,.0f} MW. Average {label} is {avg_weather:,.1f}. "
+        f"The demand relationship with {label} is {strength} {direction} (correlation {corr:.2f})."
+    )
