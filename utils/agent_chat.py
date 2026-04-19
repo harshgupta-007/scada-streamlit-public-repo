@@ -5,6 +5,13 @@ from typing import Dict, List, Optional
 
 
 DEFAULT_MODEL = "gemini-2.5-flash"
+WEATHER_COLUMNS = {
+    "temperature_2m": "temperature",
+    "relativehumidity_2m": "relative humidity",
+    "windspeed_10m": "wind speed",
+    "apparent_temperature": "apparent temperature",
+    "precipitation": "precipitation",
+}
 MONTH_LOOKUP = {
     "jan": 1,
     "january": 1,
@@ -94,6 +101,13 @@ def build_scada_context(df: pd.DataFrame) -> str:
         context_lines.append(
             "- Generation mix: "
             + ", ".join(f"{col.replace('_gen', '').title()}={value:,.1f} GWh" for col, value in generation_gwh.items())
+        )
+
+    available_weather_cols = [col for col in WEATHER_COLUMNS if col in working_df.columns]
+    if available_weather_cols:
+        context_lines.append(
+            "- Weather variables available: "
+            + ", ".join(WEATHER_COLUMNS[col] for col in available_weather_cols)
         )
 
     return "\n".join(context_lines)
@@ -233,6 +247,12 @@ def tool_compare_dates(prompt: str, df: pd.DataFrame) -> str:
             f"- {summary['date']}: energy={summary['energy_gwh']:,.1f} GWh, "
             f"avg={summary['avg_mw']:,.0f} MW, peak={summary['peak_mw']:,.0f} MW at {summary['peak_time']}"
         )
+        weather_parts = []
+        for col, label in WEATHER_COLUMNS.items():
+            if col in day_df.columns:
+                weather_parts.append(f"{label}={day_df[col].mean():,.1f}")
+        if weather_parts:
+            lines.append("- Weather average: " + ", ".join(weather_parts))
 
     first, second = summaries[0], summaries[1]
     lines.append(
@@ -362,11 +382,158 @@ def tool_anomaly_scan(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
+def _available_weather_columns(df: pd.DataFrame) -> List[str]:
+    return [col for col in WEATHER_COLUMNS if col in df.columns]
+
+
+def _preferred_weather_column(prompt: str, df: pd.DataFrame) -> Optional[str]:
+    available_cols = _available_weather_columns(df)
+    if not available_cols:
+        return None
+
+    prompt_lower = prompt.lower()
+    keyword_map = {
+        "temperature_2m": ["temperature", "temp", "heat", "hot", "cool"],
+        "apparent_temperature": ["apparent", "feels like", "felt"],
+        "relativehumidity_2m": ["humidity", "humid"],
+        "windspeed_10m": ["wind", "wind speed"],
+        "precipitation": ["rain", "precipitation", "precip"],
+    }
+    for col, keywords in keyword_map.items():
+        if col in available_cols and any(keyword in prompt_lower for keyword in keywords):
+            return col
+    return available_cols[0]
+
+
+def tool_weather_summary(df: pd.DataFrame) -> str:
+    weather_cols = _available_weather_columns(df)
+    if not weather_cols:
+        return "Tool: weather_summary\n- Weather columns are not available in the selected data."
+
+    working_df = df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"])
+    lines = ["Tool: weather_summary"]
+    for col in weather_cols:
+        valid_df = working_df[["demand_energy", col]].dropna()
+        if valid_df.empty:
+            continue
+        corr = valid_df["demand_energy"].corr(valid_df[col]) if len(valid_df) > 1 else 0
+        corr = 0 if pd.isna(corr) else corr
+        lines.append(
+            f"- {WEATHER_COLUMNS[col]}: avg={valid_df[col].mean():,.1f}, "
+            f"min={valid_df[col].min():,.1f}, max={valid_df[col].max():,.1f}, "
+            f"demand correlation={corr:.2f}"
+        )
+    return "\n".join(lines)
+
+
+def tool_weather_extremes(df: pd.DataFrame, prompt: str) -> str:
+    weather_col = _preferred_weather_column(prompt, df)
+    if not weather_col:
+        return "Tool: weather_extremes\n- Weather columns are not available in the selected data."
+
+    working_df = df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"])
+    valid_df = working_df[["date", "block_no", "demand_energy", weather_col]].dropna()
+    if valid_df.empty:
+        return "Tool: weather_extremes\n- No overlapping demand and weather records are available."
+
+    hottest = valid_df.loc[valid_df[weather_col].idxmax()]
+    coolest = valid_df.loc[valid_df[weather_col].idxmin()]
+    daily_df = valid_df.groupby("date")[["demand_energy", weather_col]].mean().reset_index()
+    high_weather_day = daily_df.loc[daily_df[weather_col].idxmax()]
+    high_demand_day = daily_df.loc[daily_df["demand_energy"].idxmax()]
+    label = WEATHER_COLUMNS[weather_col]
+
+    return "\n".join(
+        [
+            "Tool: weather_extremes",
+            (
+                f"- Highest block {label}: {hottest[weather_col]:,.1f} on "
+                f"{hottest['date'].date()} at {_block_to_time(hottest['block_no'])}; "
+                f"demand was {hottest['demand_energy']:,.0f} MW"
+            ),
+            (
+                f"- Lowest block {label}: {coolest[weather_col]:,.1f} on "
+                f"{coolest['date'].date()} at {_block_to_time(coolest['block_no'])}; "
+                f"demand was {coolest['demand_energy']:,.0f} MW"
+            ),
+            (
+                f"- Highest average {label} day: {high_weather_day['date'].date()} "
+                f"({high_weather_day[weather_col]:,.1f}); avg demand was "
+                f"{high_weather_day['demand_energy']:,.0f} MW"
+            ),
+            (
+                f"- Highest average demand day: {high_demand_day['date'].date()} "
+                f"({high_demand_day['demand_energy']:,.0f} MW); avg {label} was "
+                f"{high_demand_day[weather_col]:,.1f}"
+            ),
+        ]
+    )
+
+
+def tool_weather_intraday(df: pd.DataFrame, prompt: str) -> str:
+    weather_col = _preferred_weather_column(prompt, df)
+    if not weather_col:
+        return "Tool: weather_intraday\n- Weather columns are not available in the selected data."
+
+    working_df = df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"])
+    valid_df = working_df[["date", "block_no", "demand_energy", weather_col]].dropna()
+    if valid_df.empty:
+        return "Tool: weather_intraday\n- No overlapping intraday demand and weather records are available."
+
+    if valid_df["date"].dt.date.nunique() > 1:
+        latest_date = valid_df["date"].max().date()
+        valid_df = valid_df[valid_df["date"].dt.date == latest_date]
+
+    peak = valid_df.loc[valid_df["demand_energy"].idxmax()]
+    minimum = valid_df.loc[valid_df["demand_energy"].idxmin()]
+    weather_high = valid_df.loc[valid_df[weather_col].idxmax()]
+    corr = valid_df["demand_energy"].corr(valid_df[weather_col]) if len(valid_df) > 1 else 0
+    corr = 0 if pd.isna(corr) else corr
+    label = WEATHER_COLUMNS[weather_col]
+
+    return "\n".join(
+        [
+            "Tool: weather_intraday",
+            f"- Date analyzed: {valid_df['date'].iloc[0].date()}",
+            (
+                f"- Demand peak: {peak['demand_energy']:,.0f} MW at "
+                f"{_block_to_time(peak['block_no'])}; {label} was {peak[weather_col]:,.1f}"
+            ),
+            (
+                f"- Demand minimum: {minimum['demand_energy']:,.0f} MW at "
+                f"{_block_to_time(minimum['block_no'])}; {label} was {minimum[weather_col]:,.1f}"
+            ),
+            (
+                f"- Highest {label}: {weather_high[weather_col]:,.1f} at "
+                f"{_block_to_time(weather_high['block_no'])}; demand was {weather_high['demand_energy']:,.0f} MW"
+            ),
+            f"- Block-level demand correlation with {label}: {corr:.2f}",
+        ]
+    )
+
+
 def run_relevant_tools(prompt: str, df: pd.DataFrame) -> str:
     """Run deterministic local dataframe tools based on the user question."""
     prompt_lower = prompt.lower()
     tools = []
     scoped_df, scope_text = resolve_analysis_scope(prompt, df)
+    weather_requested = any(
+        word in prompt_lower
+        for word in [
+            "weather",
+            "temperature",
+            "temp",
+            "humidity",
+            "wind",
+            "rain",
+            "precipitation",
+            "apparent",
+            "heat",
+        ]
+    )
 
     if any(word in prompt_lower for word in ["compare", "comparison", "versus", "vs", "difference", "between"]):
         tools.append(lambda _: tool_compare_dates(prompt, df))
@@ -382,15 +549,23 @@ def run_relevant_tools(prompt: str, df: pd.DataFrame) -> str:
         tools.append(tool_ramp_analysis)
     if any(word in prompt_lower for word in ["anomaly", "anomalies", "spike", "outlier", "abnormal"]):
         tools.append(tool_anomaly_scan)
+    if weather_requested:
+        tools.append(tool_weather_summary)
+    if weather_requested and any(word in prompt_lower for word in ["highest", "lowest", "maximum", "minimum", "max", "min", "peak"]):
+        tools.append(lambda data: tool_weather_extremes(data, prompt))
+    if weather_requested and any(word in prompt_lower for word in ["intraday", "block", "selected day", "single day", "96"]):
+        tools.append(lambda data: tool_weather_intraday(data, prompt))
 
     if not tools:
         tools = [tool_summary, tool_peak_and_minimum, tool_regional_contribution]
+        if _available_weather_columns(scoped_df):
+            tools.append(tool_weather_summary)
 
     return scope_text + "\n\n" + "\n\n".join(tool(scoped_df) for tool in tools)
 
 
 def ask_scada_agent(prompt: str, df: pd.DataFrame, history: Optional[List[Dict[str, str]]] = None) -> str:
-    """Ask Gemini to answer using only the selected public SCADA sample data."""
+    """Ask Gemini to answer using only the selected public SCADA/weather sample data."""
     api_key = get_google_api_key()
     if not api_key:
         return "Agent Chat is not configured. Add GOOGLE_API_KEY in Streamlit secrets to enable it."
@@ -411,11 +586,12 @@ def ask_scada_agent(prompt: str, df: pd.DataFrame, history: Optional[List[Dict[s
 You are a professional SCADA analytics assistant for a public demo dashboard.
 
 Rules:
-- Use only the SCADA sample dataset context provided below.
+- Use only the public SCADA and weather sample dataset context provided below.
 - Do not claim access to live systems, private databases, secrets, or hidden files.
 - If a question requires data not present in the context, say what is missing.
 - Keep answers concise, engineering-focused, and suitable for power-system stakeholders.
 - Use MW for power and GWh for energy.
+- Weather data is public Open-Meteo sample data merged by date and 15-minute block.
 - Prefer the deterministic tool results over general reasoning when answering numerical questions.
 - If the user mentions a date, use the analysis scope and tool results for that date when available.
 

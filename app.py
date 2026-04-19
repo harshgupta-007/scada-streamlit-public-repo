@@ -384,7 +384,7 @@ def render_weather_correlation():
 def render_agent_chat():
     st.header("SCADA Agent Chat")
     st.markdown(
-        "Ask questions about the currently selected sample dataset. "
+        "Ask questions about the currently selected sample SCADA and weather dataset. "
         "This chat does not access live SCADA systems or private databases."
     )
 
@@ -393,15 +393,41 @@ def render_agent_chat():
         st.info("Please select a valid date range containing data before using Agent Chat.")
         return
 
+    weather_df = get_merged_scada_weather()
+    if not weather_df.empty:
+        start_date = st.session_state.get("start_date")
+        end_date = st.session_state.get("end_date")
+        if start_date and end_date:
+            weather_df = filter_data_by_date(weather_df, start_date, end_date)
+        if st.session_state.get("exclude_weekends", False) and "is_weekend" in weather_df.columns:
+            weather_df = weather_df[~weather_df["is_weekend"]]
+        if st.session_state.get("exclude_holidays", False) and "is_holiday" in weather_df.columns:
+            weather_df = weather_df[~weather_df["is_holiday"]]
+        if st.session_state.get("exclude_events", False) and "is_special_event" in weather_df.columns:
+            weather_df = weather_df[~weather_df["is_special_event"]]
+        if not weather_df.empty:
+            df = weather_df
+
     if not is_agent_chat_configured():
         st.warning("Agent Chat is not configured. Add GOOGLE_API_KEY in Streamlit secrets to enable it.")
         return
+
+    st.caption(
+        "Example questions: "
+        "`Did temperature affect peak demand?`  "
+        "`Give intraday weather-demand analysis for 26 Nov.`  "
+        "`Which day had the highest temperature and demand?`  "
+        "`Compare 1 Nov and 26 Nov with weather.`"
+    )
 
     if "agent_messages" not in st.session_state:
         st.session_state["agent_messages"] = [
             {
                 "role": "assistant",
-                "content": "Ask me about demand peaks, regional contribution, generation mix, ramps, or anomalies in the selected sample data.",
+                "content": (
+                    "Ask me about demand peaks, regional contribution, generation mix, ramps, anomalies, "
+                    "or weather-demand relationships in the selected public sample data."
+                ),
             }
         ]
 
@@ -418,7 +444,7 @@ def render_agent_chat():
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Analyzing selected SCADA data..."):
+        with st.spinner("Analyzing selected SCADA and weather data..."):
             response = ask_scada_agent(prompt, df, st.session_state["agent_messages"])
         st.markdown(response)
 
