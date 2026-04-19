@@ -759,8 +759,61 @@ def plot_weather_demand_scatter(df: pd.DataFrame, weather_col="temperature_2m"):
     return fig
 
 
+WEATHER_LABELS = {
+    "temperature_2m": "Temperature (deg C)",
+    "relativehumidity_2m": "Relative Humidity (%)",
+    "windspeed_10m": "Wind Speed (km/h)",
+    "apparent_temperature": "Apparent Temperature (deg C)",
+    "precipitation": "Precipitation (mm)",
+}
+
+
+def _weather_label(weather_col: str) -> str:
+    return WEATHER_LABELS.get(weather_col, weather_col.replace("_", " ").title())
+
+
+def plot_daily_weather_overlay(df: pd.DataFrame, weather_col="temperature_2m"):
+    """Plot daily average demand and weather on dual axes."""
+    if df.empty or weather_col not in df.columns:
+        return None
+
+    daily_df = df.groupby("date")[["demand_energy", weather_col]].mean().reset_index()
+    if daily_df.empty:
+        return None
+
+    weather_label = _weather_label(weather_col)
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Scatter(
+            x=daily_df["date"],
+            y=daily_df["demand_energy"],
+            name="Average Demand (MW)",
+            line=dict(width=2),
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=daily_df["date"],
+            y=daily_df[weather_col],
+            name=weather_label,
+            line=dict(width=2, dash="dot"),
+        ),
+        secondary_y=True,
+    )
+    fig.update_layout(
+        title=f"Daily Demand and {_weather_label(weather_col)} Trend",
+        template="plotly_white",
+        hovermode="x unified",
+    )
+    fig.update_yaxes(title_text="Average Demand (MW)", secondary_y=False)
+    fig.update_yaxes(title_text=weather_label, secondary_y=True)
+    return fig
+
+
 def plot_intraday_weather_overlay(df: pd.DataFrame, weather_col="temperature_2m"):
-    """Plot average intraday demand and weather profile on dual axes."""
+    """Plot intraday demand and weather profile on dual axes."""
     if df.empty or weather_col not in df.columns:
         return None
 
@@ -768,13 +821,10 @@ def plot_intraday_weather_overlay(df: pd.DataFrame, weather_col="temperature_2m"
     if profile.empty:
         return None
 
-    weather_labels = {
-        "temperature_2m": "Temperature (deg C)",
-        "relativehumidity_2m": "Relative Humidity (%)",
-        "windspeed_10m": "Wind Speed (km/h)",
-        "apparent_temperature": "Apparent Temperature (deg C)",
-        "precipitation": "Precipitation (mm)",
-    }
+    weather_label = _weather_label(weather_col)
+    date_title = ""
+    if "date" in df.columns and df["date"].nunique() == 1:
+        date_title = f" on {pd.to_datetime(df['date'].iloc[0]).strftime('%d %b %Y')}"
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
@@ -785,19 +835,87 @@ def plot_intraday_weather_overlay(df: pd.DataFrame, weather_col="temperature_2m"
         go.Scatter(
             x=profile["block_no"],
             y=profile[weather_col],
-            name=weather_labels.get(weather_col, weather_col),
+            name=weather_label,
             line=dict(width=2, dash="dot"),
         ),
         secondary_y=True,
     )
     fig.update_layout(
-        title=f"Intraday Demand vs {weather_labels.get(weather_col, weather_col)}",
+        title=f"Intraday Demand vs {weather_label}{date_title}",
         template="plotly_white",
         hovermode="x unified",
     )
     fig.update_yaxes(title_text="Demand (MW)", secondary_y=False)
-    fig.update_yaxes(title_text=weather_labels.get(weather_col, weather_col), secondary_y=True)
+    fig.update_yaxes(title_text=weather_label, secondary_y=True)
     return fig
+
+
+def plot_intraday_weather_scatter(df: pd.DataFrame, weather_col="temperature_2m"):
+    """Plot 96-block demand sensitivity against a selected weather variable."""
+    if df.empty or weather_col not in df.columns:
+        return None
+
+    block_df = df[["block_no", "demand_energy", weather_col]].dropna().copy()
+    if block_df.empty:
+        return None
+
+    weather_label = _weather_label(weather_col)
+    fig = px.scatter(
+        block_df,
+        x=weather_col,
+        y="demand_energy",
+        color="block_no",
+        color_continuous_scale="Viridis",
+        title=f"Selected-Day Block Demand vs {weather_label}",
+        labels={
+            weather_col: weather_label,
+            "demand_energy": "Demand (MW)",
+            "block_no": "Block",
+        },
+        template="plotly_white",
+    )
+    return fig
+
+
+def build_weather_kpis(df: pd.DataFrame, weather_col="temperature_2m"):
+    """Return KPI values for the weather correlation page."""
+    if df.empty or weather_col not in df.columns:
+        return {}
+
+    valid_df = df[["demand_energy", weather_col]].dropna()
+    if valid_df.empty:
+        return {}
+
+    corr = valid_df["demand_energy"].corr(valid_df[weather_col]) if len(valid_df) > 1 else 0
+    return {
+        "records": int(len(valid_df)),
+        "avg_demand": float(valid_df["demand_energy"].mean()),
+        "peak_demand": float(valid_df["demand_energy"].max()),
+        "avg_weather": float(valid_df[weather_col].mean()),
+        "correlation": float(corr) if pd.notna(corr) else 0,
+    }
+
+
+def build_intraday_weather_summary(df: pd.DataFrame, weather_col="temperature_2m"):
+    """Return a compact selected-day intraday weather summary."""
+    if df.empty or weather_col not in df.columns:
+        return "No selected-day weather and demand data is available."
+
+    valid_df = df[["block_no", "demand_energy", weather_col]].dropna()
+    if valid_df.empty:
+        return "No selected-day weather and demand data is available."
+
+    peak = valid_df.loc[valid_df["demand_energy"].idxmax()]
+    min_row = valid_df.loc[valid_df["demand_energy"].idxmin()]
+    corr = valid_df["demand_energy"].corr(valid_df[weather_col]) if len(valid_df) > 1 else 0
+    corr = 0 if pd.isna(corr) else corr
+
+    return (
+        f"Selected day peak demand is {peak['demand_energy']:,.0f} MW at "
+        f"{block_to_time(int(peak['block_no']))} with {_weather_label(weather_col).lower()} "
+        f"{peak[weather_col]:,.1f}. Minimum demand is {min_row['demand_energy']:,.0f} MW at "
+        f"{block_to_time(int(min_row['block_no']))}. Block-level correlation is {corr:.2f}."
+    )
 
 
 def build_weather_correlation_summary(df: pd.DataFrame, weather_col="temperature_2m"):

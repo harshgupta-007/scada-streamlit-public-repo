@@ -20,8 +20,12 @@ from utils.charts import (
     plot_regional_distribution,
     plot_regional_trend,
     plot_variability,
+    plot_daily_weather_overlay,
     plot_weather_demand_scatter,
+    plot_intraday_weather_scatter,
     plot_intraday_weather_overlay,
+    build_intraday_weather_summary,
+    build_weather_kpis,
     build_weather_correlation_summary,
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
@@ -264,7 +268,10 @@ def render_intraday():
 
 def render_weather_correlation():
     st.header("Weather Correlation")
-    st.markdown("Analyze how public Open-Meteo sample weather aligns with SCADA demand.")
+    st.markdown(
+        "Analyze how public Open-Meteo sample weather aligns with SCADA demand, "
+        "from daily correlation down to 96-block intraday behavior."
+    )
 
     df = get_merged_scada_weather()
     if df.empty:
@@ -294,25 +301,72 @@ def render_weather_correlation():
         "Apparent Temperature": "apparent_temperature",
         "Precipitation": "precipitation",
     }
-    selected_label = st.selectbox("Weather variable", list(weather_options.keys()))
+    selected_label = st.selectbox("Weather variable", list(weather_options.keys()), key="weather_variable")
     weather_col = weather_options[selected_label]
 
-    st.info(build_weather_correlation_summary(df, weather_col))
+    kpis = build_weather_kpis(df, weather_col)
+    if kpis:
+        kpi_cols = st.columns(5)
+        kpi_cols[0].metric("Matched Blocks", f"{kpis['records']:,}")
+        kpi_cols[1].metric("Avg Demand", f"{kpis['avg_demand']:,.0f} MW")
+        kpi_cols[2].metric("Peak Demand", f"{kpis['peak_demand']:,.0f} MW")
+        kpi_cols[3].metric(f"Avg {selected_label}", f"{kpis['avg_weather']:,.1f}")
+        kpi_cols[4].metric("Correlation", f"{kpis['correlation']:.2f}")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_scatter = plot_weather_demand_scatter(df, weather_col)
-        if fig_scatter:
-            st.plotly_chart(fig_scatter, use_container_width=True)
-        else:
-            st.warning("Could not build the daily weather-demand scatter chart.")
+    daily_tab, intraday_tab = st.tabs(["Daily Relationship", "Intraday Calendar"])
 
-    with col2:
-        fig_overlay = plot_intraday_weather_overlay(df, weather_col)
-        if fig_overlay:
-            st.plotly_chart(fig_overlay, use_container_width=True)
-        else:
-            st.warning("Could not build the intraday weather overlay chart.")
+    with daily_tab:
+        st.info(build_weather_correlation_summary(df, weather_col))
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_scatter = plot_weather_demand_scatter(df, weather_col)
+            if fig_scatter:
+                st.plotly_chart(fig_scatter, use_container_width=True)
+            else:
+                st.warning("Could not build the daily weather-demand scatter chart.")
+
+        with col2:
+            fig_daily_overlay = plot_daily_weather_overlay(df, weather_col)
+            if fig_daily_overlay:
+                st.plotly_chart(fig_daily_overlay, use_container_width=True)
+            else:
+                st.warning("Could not build the daily weather overlay chart.")
+
+    with intraday_tab:
+        available_dates = sorted(df["date"].dt.date.unique())
+        if not available_dates:
+            st.warning("No dates are available for intraday weather analysis.")
+            return
+
+        default_date = available_dates[-1]
+        selected_date = st.date_input(
+            "Select date for 96-block intraday weather analysis",
+            value=default_date,
+            min_value=available_dates[0],
+            max_value=available_dates[-1],
+            key="weather_intraday_date",
+        )
+
+        df_intraday = df[df["date"].dt.date == selected_date]
+        if df_intraday.empty:
+            st.warning("No merged weather and demand records are available for the selected date.")
+            return
+
+        st.success(build_intraday_weather_summary(df_intraday, weather_col))
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_overlay = plot_intraday_weather_overlay(df_intraday, weather_col)
+            if fig_overlay:
+                st.plotly_chart(fig_overlay, use_container_width=True)
+            else:
+                st.warning("Could not build the selected-day intraday weather overlay chart.")
+
+        with col2:
+            fig_block_scatter = plot_intraday_weather_scatter(df_intraday, weather_col)
+            if fig_block_scatter:
+                st.plotly_chart(fig_block_scatter, use_container_width=True)
+            else:
+                st.warning("Could not build the selected-day block scatter chart.")
 
 
 def render_agent_chat():
