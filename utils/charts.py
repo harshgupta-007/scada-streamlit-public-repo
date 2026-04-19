@@ -752,7 +752,6 @@ def plot_weather_demand_scatter(df: pd.DataFrame, weather_col="temperature_2m"):
         daily_df,
         x=weather_col,
         y="demand_energy",
-        trendline="ols",
         title=f"Daily Demand vs {labels.get(weather_col, weather_col)}",
         labels=labels,
         template="plotly_white",
