@@ -669,14 +669,14 @@ def plot_regional_weather_scatter(df: pd.DataFrame, zone='WZ', param='temperatur
 
     if color_arg == 'Day Type':
         fig = px.scatter(
-            df_daily, x=weather_col, y=demand_col, trendline='ols', 
+            df_daily, x=weather_col, y=demand_col,
             title=f"{zone} Demand Elasticity to {param.title()}",
             labels={weather_col: f"{param.title()}", demand_col: f"{zone} Demand (MW)"},
             opacity=0.75, color='Day Type', color_discrete_map=color_map, symbol='Day Type'
         )
     else:
         fig = px.scatter(
-            df_daily, x=weather_col, y=demand_col, trendline='ols',
+            df_daily, x=weather_col, y=demand_col,
             title=f"{zone} Demand Elasticity to {param.title()}",
             labels={weather_col: f"{param.title()}", demand_col: f"{zone} Demand (MW)"},
             opacity=0.6, color=demand_col, color_continuous_scale='Turbo'
