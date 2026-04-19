@@ -752,9 +752,25 @@ def plot_weather_demand_scatter(df: pd.DataFrame, weather_col="temperature_2m"):
         daily_df,
         x=weather_col,
         y="demand_energy",
-        title=f"Daily Demand vs {labels.get(weather_col, weather_col)}",
+        title=f"Advanced Daily Sensitivity: Demand vs {labels.get(weather_col, weather_col)}",
         labels=labels,
         template="plotly_white",
+        hover_data={"date": "|%d %b %Y", weather_col: ":.1f", "demand_energy": ":,.0f"},
+    )
+    fig.update_traces(marker=dict(size=9, opacity=0.75))
+    fig.update_layout(
+        hovermode="closest",
+        annotations=[
+            dict(
+                text="Each dot is one day",
+                xref="paper",
+                yref="paper",
+                x=0,
+                y=1.08,
+                showarrow=False,
+                font=dict(size=12, color="#6B7280"),
+            )
+        ],
     )
     return fig
 
@@ -803,9 +819,10 @@ def plot_daily_weather_overlay(df: pd.DataFrame, weather_col="temperature_2m"):
         secondary_y=True,
     )
     fig.update_layout(
-        title=f"Daily Demand and {_weather_label(weather_col)} Trend",
+        title=f"Daily Trend: Demand and {_weather_label(weather_col)}",
         template="plotly_white",
         hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     fig.update_yaxes(title_text="Average Demand (MW)", secondary_y=False)
     fig.update_yaxes(title_text=weather_label, secondary_y=True)
@@ -821,6 +838,7 @@ def plot_intraday_weather_overlay(df: pd.DataFrame, weather_col="temperature_2m"
     if profile.empty:
         return None
 
+    profile["time"] = profile["block_no"].apply(block_to_time)
     weather_label = _weather_label(weather_col)
     date_title = ""
     if "date" in df.columns and df["date"].nunique() == 1:
@@ -828,25 +846,34 @@ def plot_intraday_weather_overlay(df: pd.DataFrame, weather_col="temperature_2m"
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
-        go.Scatter(x=profile["block_no"], y=profile["demand_energy"], name="Demand (MW)", line=dict(width=2)),
+        go.Scatter(
+            x=profile["time"],
+            y=profile["demand_energy"],
+            name="Demand (MW)",
+            line=dict(width=3, color="#2563EB"),
+            hovertemplate="Time %{x}<br>Demand %{y:,.0f} MW<extra></extra>",
+        ),
         secondary_y=False,
     )
     fig.add_trace(
         go.Scatter(
-            x=profile["block_no"],
+            x=profile["time"],
             y=profile[weather_col],
             name=weather_label,
-            line=dict(width=2, dash="dot"),
+            line=dict(width=3, color="#F97316", dash="dot"),
+            hovertemplate=f"Time %{{x}}<br>{weather_label} %{{y:.1f}}<extra></extra>",
         ),
         secondary_y=True,
     )
     fig.update_layout(
-        title=f"Intraday Demand vs {weather_label}{date_title}",
+        title=f"Selected-Day Intraday Profile: Demand and {weather_label}{date_title}",
         template="plotly_white",
         hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     fig.update_yaxes(title_text="Demand (MW)", secondary_y=False)
     fig.update_yaxes(title_text=weather_label, secondary_y=True)
+    fig.update_xaxes(title_text="Time of Day", tickangle=0, nticks=12)
     return fig
 
 
@@ -859,6 +886,7 @@ def plot_intraday_weather_scatter(df: pd.DataFrame, weather_col="temperature_2m"
     if block_df.empty:
         return None
 
+    block_df["time"] = block_df["block_no"].apply(block_to_time)
     weather_label = _weather_label(weather_col)
     fig = px.scatter(
         block_df,
@@ -866,13 +894,29 @@ def plot_intraday_weather_scatter(df: pd.DataFrame, weather_col="temperature_2m"
         y="demand_energy",
         color="block_no",
         color_continuous_scale="Viridis",
-        title=f"Selected-Day Block Demand vs {weather_label}",
+        title=f"Advanced Block Sensitivity: Demand vs {weather_label}",
         labels={
             weather_col: weather_label,
             "demand_energy": "Demand (MW)",
-            "block_no": "Block",
+            "block_no": "Time Block",
         },
+        hover_data={"time": True, "block_no": True, weather_col: ":.1f", "demand_energy": ":,.0f"},
         template="plotly_white",
+    )
+    fig.update_traces(marker=dict(size=8, opacity=0.85))
+    fig.update_layout(
+        hovermode="closest",
+        annotations=[
+            dict(
+                text="Each dot is one 15-minute block; color shows time moving through the day",
+                xref="paper",
+                yref="paper",
+                x=0,
+                y=1.08,
+                showarrow=False,
+                font=dict(size=12, color="#6B7280"),
+            )
+        ],
     )
     return fig
 

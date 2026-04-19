@@ -317,20 +317,26 @@ def render_weather_correlation():
 
     with daily_tab:
         st.info(build_weather_correlation_summary(df, weather_col))
-        col1, col2 = st.columns(2)
-        with col1:
+        st.caption(
+            "How to read this: the blue line shows average demand by date, while the orange dotted line "
+            "shows the selected weather variable for the same dates."
+        )
+        fig_daily_overlay = plot_daily_weather_overlay(df, weather_col)
+        if fig_daily_overlay:
+            st.plotly_chart(fig_daily_overlay, use_container_width=True)
+        else:
+            st.warning("Could not build the daily weather overlay chart.")
+
+        with st.expander("Advanced: daily sensitivity scatter"):
+            st.caption(
+                "Use this when you want to inspect whether higher or lower weather values usually align "
+                "with higher demand. Each point represents one day."
+            )
             fig_scatter = plot_weather_demand_scatter(df, weather_col)
             if fig_scatter:
                 st.plotly_chart(fig_scatter, use_container_width=True)
             else:
                 st.warning("Could not build the daily weather-demand scatter chart.")
-
-        with col2:
-            fig_daily_overlay = plot_daily_weather_overlay(df, weather_col)
-            if fig_daily_overlay:
-                st.plotly_chart(fig_daily_overlay, use_container_width=True)
-            else:
-                st.warning("Could not build the daily weather overlay chart.")
 
     with intraday_tab:
         available_dates = sorted(df["date"].dt.date.unique())
@@ -353,15 +359,21 @@ def render_weather_correlation():
             return
 
         st.success(build_intraday_weather_summary(df_intraday, weather_col))
-        col1, col2 = st.columns(2)
-        with col1:
-            fig_overlay = plot_intraday_weather_overlay(df_intraday, weather_col)
-            if fig_overlay:
-                st.plotly_chart(fig_overlay, use_container_width=True)
-            else:
-                st.warning("Could not build the selected-day intraday weather overlay chart.")
+        st.caption(
+            "How to read this: follow demand across the day first. Then compare whether the dotted weather "
+            "line rises or falls before demand changes."
+        )
+        fig_overlay = plot_intraday_weather_overlay(df_intraday, weather_col)
+        if fig_overlay:
+            st.plotly_chart(fig_overlay, use_container_width=True)
+        else:
+            st.warning("Could not build the selected-day intraday weather overlay chart.")
 
-        with col2:
+        with st.expander("Advanced: selected-day block sensitivity scatter"):
+            st.caption(
+                "This is useful for deeper analysis, but it is less intuitive than the time profile. "
+                "Each point is one 15-minute block, and color shows the block sequence through the day."
+            )
             fig_block_scatter = plot_intraday_weather_scatter(df_intraday, weather_col)
             if fig_block_scatter:
                 st.plotly_chart(fig_block_scatter, use_container_width=True)
