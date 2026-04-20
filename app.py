@@ -24,7 +24,9 @@ from utils.charts import (
     plot_weather_demand_scatter,
     plot_intraday_weather_scatter,
     plot_intraday_weather_overlay,
+    plot_multi_date_weather_comparison,
     build_intraday_weather_summary,
+    build_multi_date_weather_comparison,
     build_weather_kpis,
     build_weather_correlation_summary,
 )
@@ -313,7 +315,9 @@ def render_weather_correlation():
         kpi_cols[3].metric(f"Avg {selected_label}", f"{kpis['avg_weather']:,.1f}")
         kpi_cols[4].metric("Correlation", f"{kpis['correlation']:.2f}")
 
-    daily_tab, intraday_tab = st.tabs(["Daily Relationship", "Intraday Calendar"])
+    daily_tab, intraday_tab, comparison_tab = st.tabs(
+        ["Daily Relationship", "Intraday Calendar", "Date Comparison"]
+    )
 
     with daily_tab:
         st.info(build_weather_correlation_summary(df, weather_col))
@@ -379,6 +383,45 @@ def render_weather_correlation():
                 st.plotly_chart(fig_block_scatter, use_container_width=True)
             else:
                 st.warning("Could not build the selected-day block scatter chart.")
+
+    with comparison_tab:
+        available_dates = sorted(df["date"].dt.date.unique())
+        if len(available_dates) < 2:
+            st.warning("At least two dates are required for comparison.")
+            return
+
+        default_dates = available_dates[-3:] if len(available_dates) >= 3 else available_dates
+        selected_dates = st.multiselect(
+            "Select 2 to 5 dates for comparison",
+            options=available_dates,
+            default=default_dates,
+            format_func=lambda date_value: date_value.strftime("%d %b %Y"),
+            key="weather_compare_dates",
+        )
+
+        if len(selected_dates) < 2:
+            st.info("Select at least two dates to compare weather and demand profiles.")
+            return
+        if len(selected_dates) > 5:
+            st.warning("Showing the first 5 selected dates to keep the comparison readable.")
+            selected_dates = selected_dates[:5]
+
+        st.caption(
+            "How to read this: compare the shape and timing of demand in the top chart, then check "
+            "whether the selected weather variable follows a similar or opposite pattern in the bottom chart."
+        )
+        fig_compare = plot_multi_date_weather_comparison(df, weather_col, selected_dates)
+        if fig_compare:
+            st.plotly_chart(fig_compare, use_container_width=True)
+        else:
+            st.warning("Could not build the multi-date comparison chart.")
+
+        comparison_df = build_multi_date_weather_comparison(df, weather_col, selected_dates)
+        if not comparison_df.empty:
+            st.subheader("Selected-Date Comparison Table")
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+        else:
+            st.warning("Could not build the selected-date comparison table.")
 
 
 def render_agent_chat():

@@ -921,6 +921,116 @@ def plot_intraday_weather_scatter(df: pd.DataFrame, weather_col="temperature_2m"
     return fig
 
 
+def plot_multi_date_weather_comparison(df: pd.DataFrame, weather_col="temperature_2m", selected_dates=None):
+    """Compare intraday demand and weather profiles for multiple selected dates."""
+    if df.empty or weather_col not in df.columns or not selected_dates:
+        return None
+
+    working_df = df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"])
+    selected_dates = [pd.to_datetime(date).date() for date in selected_dates]
+    working_df = working_df[working_df["date"].dt.date.isin(selected_dates)]
+    if working_df.empty:
+        return None
+
+    profile = (
+        working_df.groupby(["date", "block_no"])[["demand_energy", weather_col]]
+        .mean()
+        .reset_index()
+        .sort_values(["date", "block_no"])
+    )
+    if profile.empty:
+        return None
+
+    profile["time"] = profile["block_no"].apply(block_to_time)
+    profile["date_label"] = profile["date"].dt.strftime("%d %b")
+    weather_label = _weather_label(weather_col)
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.12,
+        subplot_titles=("Demand Profile by Date", f"{weather_label} Profile by Date"),
+    )
+
+    for date_label, date_df in profile.groupby("date_label", sort=False):
+        fig.add_trace(
+            go.Scatter(
+                x=date_df["time"],
+                y=date_df["demand_energy"],
+                name=f"{date_label} Demand",
+                mode="lines",
+                line=dict(width=2.5),
+                hovertemplate="Time %{x}<br>Demand %{y:,.0f} MW<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=date_df["time"],
+                y=date_df[weather_col],
+                name=f"{date_label} Weather",
+                mode="lines",
+                line=dict(width=2.5, dash="dot"),
+                hovertemplate=f"Time %{{x}}<br>{weather_label} %{{y:.1f}}<extra></extra>",
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
+
+    fig.update_layout(
+        title=f"Multi-Date Intraday Comparison: Demand and {weather_label}",
+        template="plotly_white",
+        hovermode="x unified",
+        height=720,
+        legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="right", x=1),
+    )
+    fig.update_yaxes(title_text="Demand (MW)", row=1, col=1)
+    fig.update_yaxes(title_text=weather_label, row=2, col=1)
+    fig.update_xaxes(title_text="Time of Day", nticks=12, row=2, col=1)
+    return fig
+
+
+def build_multi_date_weather_comparison(df: pd.DataFrame, weather_col="temperature_2m", selected_dates=None):
+    """Build a compact table for selected-date weather and demand comparison."""
+    if df.empty or weather_col not in df.columns or not selected_dates:
+        return pd.DataFrame()
+
+    working_df = df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"])
+    selected_dates = [pd.to_datetime(date).date() for date in selected_dates]
+    working_df = working_df[working_df["date"].dt.date.isin(selected_dates)]
+    if working_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for date_value, day_df in working_df.groupby(working_df["date"].dt.date):
+        valid_df = day_df[["block_no", "demand_energy", weather_col]].dropna()
+        if valid_df.empty:
+            continue
+
+        peak = valid_df.loc[valid_df["demand_energy"].idxmax()]
+        corr = valid_df["demand_energy"].corr(valid_df[weather_col]) if len(valid_df) > 1 else 0
+        corr = 0 if pd.isna(corr) else corr
+        rows.append(
+            {
+                "Date": pd.to_datetime(date_value).strftime("%d %b %Y"),
+                "Energy (GWh)": round((valid_df["demand_energy"].sum() * 0.25) / 1000, 1),
+                "Avg Demand (MW)": round(valid_df["demand_energy"].mean(), 0),
+                "Peak Demand (MW)": round(peak["demand_energy"], 0),
+                "Peak Time": block_to_time(int(peak["block_no"])),
+                f"Avg {_weather_label(weather_col)}": round(valid_df[weather_col].mean(), 1),
+                f"Max {_weather_label(weather_col)}": round(valid_df[weather_col].max(), 1),
+                "Block Corr": round(corr, 2),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def build_weather_kpis(df: pd.DataFrame, weather_col="temperature_2m"):
     """Return KPI values for the weather correlation page."""
     if df.empty or weather_col not in df.columns:
