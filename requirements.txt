@@ -4,3 +4,4 @@ numpy
 plotly
 holidays
 google-genai
+langsmith

@@ -1,7 +1,30 @@
+import os
 import pandas as pd
 import re
 import streamlit as st
 from typing import Dict, List, Optional
+
+try:
+    from langsmith import Client, traceable, tracing_context
+    LANGSMITH_AVAILABLE = True
+except Exception:
+    Client = None
+    LANGSMITH_AVAILABLE = False
+
+    def traceable(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+    class tracing_context:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
 
 
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -50,6 +73,53 @@ def get_google_api_key() -> Optional[str]:
 
 def is_agent_chat_configured() -> bool:
     return bool(get_google_api_key())
+
+
+def get_langsmith_settings() -> Dict[str, str]:
+    """Read LangSmith settings from Streamlit secrets without exposing them."""
+    try:
+        return {
+            "api_key": st.secrets.get("LANGSMITH_API_KEY", ""),
+            "project": st.secrets.get("LANGSMITH_PROJECT", "scada-streamlit-public"),
+            "tracing": str(st.secrets.get("LANGSMITH_TRACING", "true")).lower(),
+            "endpoint": st.secrets.get("LANGSMITH_ENDPOINT", ""),
+        }
+    except Exception:
+        return {
+            "api_key": "",
+            "project": "scada-streamlit-public",
+            "tracing": "false",
+            "endpoint": "",
+        }
+
+
+def is_langsmith_configured() -> bool:
+    settings = get_langsmith_settings()
+    return LANGSMITH_AVAILABLE and bool(settings["api_key"])
+
+
+def _build_langsmith_client():
+    settings = get_langsmith_settings()
+    if not LANGSMITH_AVAILABLE or not settings["api_key"]:
+        return None
+
+    client_kwargs = {"api_key": settings["api_key"]}
+    if settings["endpoint"]:
+        client_kwargs["api_url"] = settings["endpoint"]
+    return Client(**client_kwargs)
+
+
+def _configure_langsmith_environment() -> Dict[str, str]:
+    settings = get_langsmith_settings()
+    if not settings["api_key"]:
+        return settings
+
+    os.environ["LANGSMITH_API_KEY"] = settings["api_key"]
+    os.environ["LANGSMITH_PROJECT"] = settings["project"]
+    os.environ["LANGSMITH_TRACING"] = settings["tracing"]
+    if settings["endpoint"]:
+        os.environ["LANGSMITH_ENDPOINT"] = settings["endpoint"]
+    return settings
 
 
 def build_scada_context(df: pd.DataFrame) -> str:
@@ -564,14 +634,32 @@ def run_relevant_tools(prompt: str, df: pd.DataFrame) -> str:
     return scope_text + "\n\n" + "\n\n".join(tool(scoped_df) for tool in tools)
 
 
-def ask_scada_agent(prompt: str, df: pd.DataFrame, history: Optional[List[Dict[str, str]]] = None) -> str:
-    """Ask Gemini to answer using only the selected public SCADA/weather sample data."""
+@traceable(run_type="tool", name="Deterministic Data Tools")
+def _run_tool_context(prompt: str, df: pd.DataFrame) -> str:
+    return run_relevant_tools(prompt, df)
+
+
+@traceable(run_type="llm", name="Gemini Agent Response")
+def _generate_gemini_response(model_name: str, model_prompt: str) -> str:
+    from google import genai
+
+    client = genai.Client(api_key=get_google_api_key())
+    response = client.models.generate_content(
+        model=model_name,
+        contents=model_prompt,
+    )
+    return response.text or "I could not generate a response for that question."
+
+
+@traceable(run_type="chain", name="SCADA Agent Chat")
+def _run_agent_chat(prompt: str, df: pd.DataFrame, history: Optional[List[Dict[str, str]]] = None) -> str:
+    """Build agent context and request an answer from Gemini."""
     api_key = get_google_api_key()
     if not api_key:
         return "Agent Chat is not configured. Add GOOGLE_API_KEY in Streamlit secrets to enable it."
 
     try:
-        from google import genai
+        from google import genai  # noqa: F401
     except Exception:
         return "The google-genai package is not installed. Check requirements.txt and redeploy the app."
 
@@ -580,7 +668,7 @@ def ask_scada_agent(prompt: str, df: pd.DataFrame, history: Optional[List[Dict[s
     history_text = "\n".join(f"{item['role']}: {item['content']}" for item in compact_history)
     scoped_df, scope_text = resolve_analysis_scope(prompt, df)
     data_context = scope_text + "\n" + build_scada_context(scoped_df)
-    tool_context = run_relevant_tools(prompt, df)
+    tool_context = _run_tool_context(prompt, df)
 
     model_prompt = f"""
 You are a professional SCADA analytics assistant for a public demo dashboard.
@@ -609,11 +697,29 @@ User question:
 """
 
     try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=DEFAULT_MODEL,
-            contents=model_prompt,
-        )
-        return response.text or "I could not generate a response for that question."
+        return _generate_gemini_response(DEFAULT_MODEL, model_prompt)
     except Exception as exc:
         return f"Agent response failed: {exc}"
+
+
+def ask_scada_agent(prompt: str, df: pd.DataFrame, history: Optional[List[Dict[str, str]]] = None) -> str:
+    """Ask Gemini to answer using only the selected public SCADA/weather sample data."""
+    settings = _configure_langsmith_environment()
+    tracing_enabled = settings["tracing"] == "true" and bool(settings["api_key"]) and LANGSMITH_AVAILABLE
+    client = _build_langsmith_client() if tracing_enabled else None
+
+    metadata = {
+        "app": "scada-streamlit-public",
+        "model": DEFAULT_MODEL,
+        "rows_selected": int(len(df)) if df is not None else 0,
+        "weather_enabled": bool(df is not None and any(col in df.columns for col in WEATHER_COLUMNS)),
+    }
+
+    with tracing_context(
+        enabled=tracing_enabled,
+        client=client,
+        project_name=settings["project"],
+        tags=["streamlit", "agent-chat", "public-demo"],
+        metadata=metadata,
+    ):
+        return _run_agent_chat(prompt, df, history)

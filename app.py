@@ -31,7 +31,11 @@ from utils.charts import (
     build_weather_correlation_summary,
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
-from utils.agent_chat import ask_scada_agent, is_agent_chat_configured
+from utils.agent_chat import (
+    ask_scada_agent,
+    is_agent_chat_configured,
+    is_langsmith_configured,
+)
 from utils.insights import generate_master_insights
 from utils.kpi_cards import render_kpi_cards
 
@@ -454,6 +458,11 @@ def render_agent_chat():
     if not is_agent_chat_configured():
         st.warning("Agent Chat is not configured. Add GOOGLE_API_KEY in Streamlit secrets to enable it.")
         return
+
+    if is_langsmith_configured():
+        st.caption("Observability: LangSmith tracing is enabled for Agent Chat.")
+    else:
+        st.caption("Observability: LangSmith tracing is not configured.")
 
     st.caption(
         "Example questions: "

@@ -12,13 +12,14 @@ This first public release includes:
 - Regional analysis
 - Generation mix analysis
 - Intraday profile analysis
+- Weather correlation with public sample weather data
+- Agent chat using public sample data
 - sample-data-only operation
 
 Deferred for a later secure phase:
 
-- agent chat
-- weather correlation backed by private data services
 - external database integrations
+- advanced observability outside agent workflows
 
 ## Why this repo is structured this way
 
@@ -47,6 +48,20 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## Streamlit secrets
+
+For deployment, keep all secrets in Streamlit Cloud and never commit them to Git.
+
+Current optional secrets:
+
+- `GOOGLE_API_KEY`: enables Agent Chat
+- `LANGSMITH_API_KEY`: enables LangSmith tracing for Agent Chat
+- `LANGSMITH_PROJECT`: optional LangSmith project name
+- `LANGSMITH_TRACING`: optional, defaults to `true`
+- `LANGSMITH_ENDPOINT`: optional custom LangSmith endpoint
+
+Phase 1 observability traces only the Agent Chat workflow so dashboard browsing remains lightweight.
+
 ## Deployment approach
 
 The deployment flow for this project is:
@@ -73,6 +88,9 @@ Detailed deployment notes are available in:
 
 ## Current dataset
 
-The current app uses the sample file in `data/sample_scada.csv`.
+The current app uses:
+
+- `data/sample_scada.csv`
+- `data/mp_weather_96_blocks_nov_2025.csv`
 
 This is intentional for the first public deployment and keeps the app portable and safe for GitHub + Streamlit Cloud.
