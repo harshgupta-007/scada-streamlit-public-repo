@@ -530,24 +530,30 @@ def render_agent_chat():
     feedback_key = f"feedback_submitted_{trace_id}"
     if trace_id and is_langsmith_configured():
         if st.session_state.get(feedback_key):
-            st.success("Feedback already submitted for the latest response.")
+            st.caption("Feedback recorded for the latest response.")
         else:
-            with st.form(key=f"feedback_form_{trace_id}"):
-                st.caption("Rate the latest Agent Chat response")
-                rating = st.radio(
-                    "Was this response helpful?",
-                    options=["Helpful", "Not helpful"],
-                    horizontal=True,
-                )
-                comment = st.text_input("Optional comment")
-                submitted = st.form_submit_button("Submit feedback")
+            st.caption("Rate the latest response")
+            col1, col2, col3 = st.columns([1, 1, 6])
+            with col1:
+                helpful_clicked = st.button("👍", key=f"feedback_up_{trace_id}", help="Helpful")
+            with col2:
+                not_helpful_clicked = st.button("👎", key=f"feedback_down_{trace_id}", help="Not helpful")
 
-            if submitted:
-                score = 1.0 if rating == "Helpful" else 0.0
+            comment = ""
+            with st.expander("Optional comment", expanded=False):
+                comment = st.text_input(
+                    "Add a short note",
+                    key=f"feedback_comment_{trace_id}",
+                    label_visibility="collapsed",
+                    placeholder="What was good or missing?",
+                )
+
+            if helpful_clicked or not_helpful_clicked:
+                score = 1.0 if helpful_clicked else 0.0
                 status = submit_langsmith_feedback(trace_id, score, comment)
                 if status == "Feedback submitted to LangSmith.":
                     st.session_state[feedback_key] = True
-                    st.success(status)
+                    st.success("Feedback submitted.")
                 else:
                     st.warning(status)
 
