@@ -32,9 +32,10 @@ from utils.charts import (
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
 from utils.agent_chat import (
-    ask_scada_agent,
+    ask_scada_agent_with_trace,
     is_agent_chat_configured,
     is_langsmith_configured,
+    submit_langsmith_feedback,
 )
 from utils.insights import generate_master_insights
 from utils.kpi_cards import render_kpi_cards
@@ -495,12 +496,60 @@ def render_agent_chat():
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    trace_metadata = {
+        "page": "Agent Chat",
+        "start_date": str(st.session_state.get("start_date", "")),
+        "end_date": str(st.session_state.get("end_date", "")),
+        "exclude_weekends": bool(st.session_state.get("exclude_weekends", False)),
+        "exclude_holidays": bool(st.session_state.get("exclude_holidays", False)),
+        "exclude_events": bool(st.session_state.get("exclude_events", False)),
+        "selected_weather_variable": st.session_state.get("weather_variable", ""),
+    }
+
     with st.chat_message("assistant"):
         with st.spinner("Analyzing selected SCADA and weather data..."):
-            response = ask_scada_agent(prompt, df, st.session_state["agent_messages"])
-        st.markdown(response)
+            result = ask_scada_agent_with_trace(
+                prompt,
+                df,
+                st.session_state["agent_messages"],
+                trace_metadata=trace_metadata,
+            )
+        st.markdown(result["response"])
 
-    st.session_state["agent_messages"].append({"role": "assistant", "content": response})
+    st.session_state["agent_messages"].append(
+        {
+            "role": "assistant",
+            "content": result["response"],
+            "trace_id": result.get("trace_id"),
+            "project": result.get("project"),
+        }
+    )
+
+    latest_message = st.session_state["agent_messages"][-1]
+    trace_id = latest_message.get("trace_id")
+    feedback_key = f"feedback_submitted_{trace_id}"
+    if trace_id and is_langsmith_configured():
+        if st.session_state.get(feedback_key):
+            st.success("Feedback already submitted for the latest response.")
+        else:
+            with st.form(key=f"feedback_form_{trace_id}"):
+                st.caption("Rate the latest Agent Chat response")
+                rating = st.radio(
+                    "Was this response helpful?",
+                    options=["Helpful", "Not helpful"],
+                    horizontal=True,
+                )
+                comment = st.text_input("Optional comment")
+                submitted = st.form_submit_button("Submit feedback")
+
+            if submitted:
+                score = 1.0 if rating == "Helpful" else 0.0
+                status = submit_langsmith_feedback(trace_id, score, comment)
+                if status == "Feedback submitted to LangSmith.":
+                    st.session_state[feedback_key] = True
+                    st.success(status)
+                else:
+                    st.warning(status)
 
 
 if __name__ == "__main__":

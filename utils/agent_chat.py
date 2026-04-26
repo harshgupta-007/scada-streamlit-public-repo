@@ -2,14 +2,16 @@ import os
 import pandas as pd
 import re
 import streamlit as st
+import uuid
 from typing import Dict, List, Optional
 
 try:
-    from langsmith import Client, traceable, tracing_context
+    from langsmith import Client, trace, traceable, tracing_context
     LANGSMITH_AVAILABLE = True
 except Exception:
     Client = None
     LANGSMITH_AVAILABLE = False
+    trace = None
 
     def traceable(*args, **kwargs):
         def decorator(func):
@@ -120,6 +122,21 @@ def _configure_langsmith_environment() -> Dict[str, str]:
     if settings["endpoint"]:
         os.environ["LANGSMITH_ENDPOINT"] = settings["endpoint"]
     return settings
+
+
+def classify_prompt(prompt: str) -> str:
+    prompt_lower = prompt.lower()
+    if any(word in prompt_lower for word in ["compare", "versus", "vs", "difference", "between"]):
+        return "comparison"
+    if any(word in prompt_lower for word in ["intraday", "block", "selected day", "single day", "96"]):
+        return "intraday"
+    if any(word in prompt_lower for word in ["anomaly", "outlier", "spike", "abnormal"]):
+        return "anomaly"
+    if any(word in prompt_lower for word in ["weather", "temperature", "humidity", "wind", "rain", "precipitation"]):
+        return "weather"
+    if any(word in prompt_lower for word in ["region", "regional", "cz", "ez", "wz"]):
+        return "regional"
+    return "general"
 
 
 def build_scada_context(df: pd.DataFrame) -> str:
@@ -704,6 +721,17 @@ User question:
 
 def ask_scada_agent(prompt: str, df: pd.DataFrame, history: Optional[List[Dict[str, str]]] = None) -> str:
     """Ask Gemini to answer using only the selected public SCADA/weather sample data."""
+    result = ask_scada_agent_with_trace(prompt, df, history)
+    return result["response"]
+
+
+def ask_scada_agent_with_trace(
+    prompt: str,
+    df: pd.DataFrame,
+    history: Optional[List[Dict[str, str]]] = None,
+    trace_metadata: Optional[Dict[str, object]] = None,
+) -> Dict[str, Optional[str]]:
+    """Return the agent response along with the root LangSmith trace id when enabled."""
     settings = _configure_langsmith_environment()
     tracing_enabled = settings["tracing"] == "true" and bool(settings["api_key"]) and LANGSMITH_AVAILABLE
     client = _build_langsmith_client() if tracing_enabled else None
@@ -713,13 +741,68 @@ def ask_scada_agent(prompt: str, df: pd.DataFrame, history: Optional[List[Dict[s
         "model": DEFAULT_MODEL,
         "rows_selected": int(len(df)) if df is not None else 0,
         "weather_enabled": bool(df is not None and any(col in df.columns for col in WEATHER_COLUMNS)),
+        "prompt_type": classify_prompt(prompt),
+    }
+    if trace_metadata:
+        metadata.update(trace_metadata)
+
+    if tracing_enabled and trace is not None:
+        with tracing_context(
+            enabled=tracing_enabled,
+            client=client,
+            project_name=settings["project"],
+            tags=["streamlit", "agent-chat", "public-demo"],
+            metadata=metadata,
+        ):
+            with trace(
+                name="SCADA Agent Chat Session",
+                run_type="chain",
+                inputs={"prompt": prompt, "history_length": len(history or [])},
+                metadata=metadata,
+                tags=["streamlit", "agent-chat", "public-demo"],
+                project_name=settings["project"],
+                client=client,
+            ) as root_run:
+                response = _run_agent_chat(prompt, df, history)
+                root_run.outputs = {"response": response}
+                return {
+                    "response": response,
+                    "trace_id": str(root_run.id),
+                    "project": settings["project"],
+                }
+
+    response = _run_agent_chat(prompt, df, history)
+    return {
+        "response": response,
+        "trace_id": None,
+        "project": settings["project"],
     }
 
-    with tracing_context(
-        enabled=tracing_enabled,
-        client=client,
-        project_name=settings["project"],
-        tags=["streamlit", "agent-chat", "public-demo"],
-        metadata=metadata,
-    ):
-        return _run_agent_chat(prompt, df, history)
+
+def submit_langsmith_feedback(
+    trace_id: str,
+    score: float,
+    comment: str = "",
+    feedback_key: str = "user_helpfulness",
+) -> str:
+    """Submit user feedback to LangSmith for a completed trace."""
+    settings = _configure_langsmith_environment()
+    client = _build_langsmith_client()
+    if not trace_id or not client or not settings["api_key"]:
+        return "LangSmith feedback is not configured."
+
+    try:
+        uuid.UUID(str(trace_id))
+    except Exception:
+        return "Feedback could not be submitted because the trace id is invalid."
+
+    try:
+        client.create_feedback(
+            key=feedback_key,
+            score=score,
+            trace_id=trace_id,
+            comment=comment or None,
+        )
+        return "Feedback submitted to LangSmith."
+    except Exception:
+        return "Feedback could not be submitted to LangSmith right now."

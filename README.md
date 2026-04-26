@@ -61,6 +61,7 @@ Current optional secrets:
 - `LANGSMITH_ENDPOINT`: optional custom LangSmith endpoint
 
 Phase 1 observability traces only the Agent Chat workflow so dashboard browsing remains lightweight.
+Phase 2 adds lightweight user feedback on the latest Agent Chat response, which is submitted back to LangSmith for trace review.
 
 ## Deployment approach
 
