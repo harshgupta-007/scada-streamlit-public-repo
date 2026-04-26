@@ -465,6 +465,19 @@ def render_agent_chat():
     else:
         st.caption("Observability: LangSmith tracing is not configured.")
 
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stButton"] > button {
+            min-height: 2rem;
+            padding: 0.15rem 0.45rem;
+            border-radius: 999px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.caption(
         "Example questions: "
         "`Did temperature affect peak demand?`  "
@@ -528,6 +541,41 @@ def render_agent_chat():
     latest_message = st.session_state["agent_messages"][-1]
     trace_id = latest_message.get("trace_id")
     feedback_key = f"feedback_submitted_{trace_id}"
+    if trace_id and is_langsmith_configured():
+        if st.session_state.get(feedback_key):
+            st.caption("Feedback recorded for the latest response.")
+        else:
+            col1, col2, col3, col4, col5 = st.columns([0.7, 0.7, 0.7, 0.7, 8])
+            with col1:
+                copy_clicked = st.button("⧉", key=f"compact_feedback_copy_{trace_id}", help="Copy")
+            with col2:
+                helpful_clicked = st.button("👍", key=f"compact_feedback_up_{trace_id}", help="Helpful")
+            with col3:
+                not_helpful_clicked = st.button("👎", key=f"compact_feedback_down_{trace_id}", help="Not helpful")
+            with col4:
+                with st.popover("⋯", help="Optional comment"):
+                    st.text_input(
+                        "Add a short note",
+                        key=f"compact_feedback_comment_{trace_id}",
+                        label_visibility="collapsed",
+                        placeholder="What was good or missing?",
+                    )
+                    st.caption("Optional comment is used on the next feedback click.")
+
+            if copy_clicked:
+                st.caption("Copy action is not wired yet. Use browser text selection for now.")
+
+            comment = st.session_state.get(f"compact_feedback_comment_{trace_id}", "")
+            if helpful_clicked or not_helpful_clicked:
+                score = 1.0 if helpful_clicked else 0.0
+                status = submit_langsmith_feedback(trace_id, score, comment)
+                if status == "Feedback submitted to LangSmith.":
+                    st.session_state[feedback_key] = True
+                    st.caption("Feedback submitted.")
+                else:
+                    st.warning(status)
+        return
+
     if trace_id and is_langsmith_configured():
         if st.session_state.get(feedback_key):
             st.caption("Feedback recorded for the latest response.")
