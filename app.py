@@ -501,6 +501,42 @@ def render_agent_chat():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
+    latest_assistant_message = next(
+        (message for message in reversed(st.session_state["agent_messages"]) if message["role"] == "assistant"),
+        None,
+    )
+    if latest_assistant_message and is_langsmith_configured():
+        latest_trace_id = latest_assistant_message.get("trace_id")
+        latest_feedback_key = f"feedback_submitted_{latest_trace_id}"
+        if latest_trace_id:
+            if st.session_state.get(latest_feedback_key):
+                st.caption("Feedback recorded for the latest response.")
+            else:
+                col1, col2, col3, col4 = st.columns([0.7, 0.7, 0.7, 8])
+                with col1:
+                    helpful_clicked = st.button("\U0001F44D", key=f"latest_feedback_up_{latest_trace_id}", help="Helpful")
+                with col2:
+                    not_helpful_clicked = st.button("\U0001F44E", key=f"latest_feedback_down_{latest_trace_id}", help="Not helpful")
+                with col3:
+                    with st.popover("\u22EF", help="Optional comment"):
+                        st.text_input(
+                            "Add a short note",
+                            key=f"latest_feedback_comment_{latest_trace_id}",
+                            label_visibility="collapsed",
+                            placeholder="What was good or missing?",
+                        )
+                        st.caption("Optional comment is used on the next feedback click.")
+
+                latest_comment = st.session_state.get(f"latest_feedback_comment_{latest_trace_id}", "")
+                if helpful_clicked or not_helpful_clicked:
+                    latest_score = 1.0 if helpful_clicked else 0.0
+                    latest_status = submit_langsmith_feedback(latest_trace_id, latest_score, latest_comment)
+                    if latest_status == "Feedback submitted to LangSmith.":
+                        st.session_state[latest_feedback_key] = True
+                        st.rerun()
+                    else:
+                        st.warning(latest_status)
+
     prompt = st.chat_input("Ask about the selected SCADA sample data...")
     if not prompt:
         return
@@ -537,6 +573,7 @@ def render_agent_chat():
             "project": result.get("project"),
         }
     )
+    st.rerun()
 
     latest_message = st.session_state["agent_messages"][-1]
     trace_id = latest_message.get("trace_id")
