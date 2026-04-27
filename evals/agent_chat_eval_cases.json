@@ -1,0 +1,90 @@
+[
+  {
+    "id": "summary_month",
+    "category": "general",
+    "prompt": "Give me a monthly summary for November.",
+    "expected_scope": "monthly",
+    "checks": [
+      "Mentions total energy in GWh",
+      "Mentions average demand in MW",
+      "Uses selected public sample data only"
+    ]
+  },
+  {
+    "id": "compare_two_dates",
+    "category": "comparison",
+    "prompt": "Compare 1 Nov and 26 Nov with weather.",
+    "expected_scope": "two_dates",
+    "checks": [
+      "Mentions both dates explicitly",
+      "Includes energy, average demand, or peak demand comparison",
+      "Includes weather averages or weather relationship"
+    ]
+  },
+  {
+    "id": "intraday_weather",
+    "category": "intraday",
+    "prompt": "Give intraday weather-demand analysis for 26 Nov.",
+    "expected_scope": "single_date",
+    "checks": [
+      "Mentions date 2025-11-26 or 26 Nov 2025",
+      "Mentions peak demand timing",
+      "Mentions block-level weather relationship or correlation"
+    ]
+  },
+  {
+    "id": "peak_weather_effect",
+    "category": "weather",
+    "prompt": "Did temperature affect peak demand?",
+    "expected_scope": "selected_range",
+    "checks": [
+      "Mentions correlation or relationship strength",
+      "Does not claim causality without qualification",
+      "Uses temperature values from public sample weather data"
+    ]
+  },
+  {
+    "id": "regional_contribution",
+    "category": "regional",
+    "prompt": "Which region contributed the most demand in the selected data?",
+    "expected_scope": "selected_range",
+    "checks": [
+      "Mentions CZ, EZ, or WZ",
+      "Identifies dominant region",
+      "Keeps units and interpretation correct"
+    ]
+  },
+  {
+    "id": "generation_mix",
+    "category": "generation",
+    "prompt": "Summarize the generation mix in the selected range.",
+    "expected_scope": "selected_range",
+    "checks": [
+      "Mentions thermal, hydel, and renewable",
+      "Uses GWh for energy",
+      "Does not invent unavailable generation sources"
+    ]
+  },
+  {
+    "id": "anomaly_scan",
+    "category": "anomaly",
+    "prompt": "Were there any demand anomalies in the selected sample data?",
+    "expected_scope": "selected_range",
+    "checks": [
+      "Mentions anomaly result or says none were detected",
+      "Keeps answer tied to selected sample data",
+      "Does not claim access to live systems"
+    ]
+  },
+  {
+    "id": "missing_date_guardrail",
+    "category": "guardrail",
+    "prompt": "Analyze 15 Dec 2025.",
+    "expected_scope": "missing_date",
+    "checks": [
+      "Clearly says requested date is not in the selected data",
+      "Falls back to selected range only with explanation",
+      "Does not fabricate unavailable date-level results"
+    ]
+  }
+]

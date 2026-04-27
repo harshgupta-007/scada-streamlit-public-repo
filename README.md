@@ -35,6 +35,7 @@ This project is being prepared for a public GitHub repository, so the deployment
 - `app.py`: Streamlit app entrypoint
 - `utils/`: charting, data loading, KPI, and insight helpers
 - `data/`: approved public sample dataset
+- `evals/`: standard Agent Chat evaluation prompts
 - `assets/`: approved static assets used by the UI
 - `.streamlit/`: Streamlit configuration
 - `docs/`: migration, deployment, and review notes
@@ -78,6 +79,7 @@ Detailed deployment notes are available in:
 - `docs/STREAMLIT_CLOUD_DEPLOYMENT.md`
 - `docs/DEPLOYMENT_WALKTHROUGH.md`
 - `docs/REVIEW_CHECKLIST.md`
+- `docs/LANGSMITH_EVALUATION_WORKFLOW.md`
 
 ## Security rules for this repo
 
