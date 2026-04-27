@@ -80,6 +80,7 @@ Detailed deployment notes are available in:
 - `docs/DEPLOYMENT_WALKTHROUGH.md`
 - `docs/REVIEW_CHECKLIST.md`
 - `docs/LANGSMITH_EVALUATION_WORKFLOW.md`
+- `docs/LANGSMITH_DATASET_UPLOAD.md`
 
 ## Security rules for this repo
 
