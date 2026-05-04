@@ -14,7 +14,7 @@ This first public release includes:
 - Intraday profile analysis
 - Weather correlation with public sample weather data
 - Agent chat using public sample data
-- sample-data-only operation
+- MongoDB-backed operation when configured, with sample fallback
 
 Deferred for a later secure phase:
 
@@ -60,6 +60,7 @@ Current optional secrets:
 - `LANGSMITH_PROJECT`: optional LangSmith project name
 - `LANGSMITH_TRACING`: optional, defaults to `true`
 - `LANGSMITH_ENDPOINT`: optional custom LangSmith endpoint
+- `MONGODB_URI`: enables MongoDB as the primary SCADA and weather source
 
 Phase 1 observability traces only the Agent Chat workflow so dashboard browsing remains lightweight.
 Phase 2 adds lightweight user feedback on the latest Agent Chat response, which is submitted back to LangSmith for trace review.
@@ -97,4 +98,10 @@ The current app uses:
 - `data/sample_scada.csv`
 - `data/mp_weather_96_blocks_nov_2025.csv`
 
-This is intentional for the first public deployment and keeps the app portable and safe for GitHub + Streamlit Cloud.
+When `MONGODB_URI` is configured, the app reads:
+
+- database: `SCADA_AGENT`
+- SCADA collection: `SCADA_data`
+- weather collection: `Weather_data`
+
+If MongoDB is not configured or cannot be reached, the app falls back to the local sample files above.

@@ -31,6 +31,7 @@ from utils.charts import (
     build_weather_correlation_summary,
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
+from utils.data_loader import get_data_source_label
 from utils.agent_chat import (
     ask_scada_agent_with_trace,
     is_agent_chat_configured,
@@ -125,7 +126,8 @@ def build_sidebar(df):
     st.session_state["exclude_events"] = exclude_events
 
     st.sidebar.markdown("---")
-    st.sidebar.caption("Phase 1 public deployment uses sample data only.")
+    st.sidebar.caption(f"Data source: {get_data_source_label()}")
+    st.sidebar.caption("MongoDB is used when configured; otherwise the app falls back to approved sample files.")
     st.sidebar.caption("Deferred features: " + ", ".join(DEFERRED_PAGES))
 
     return page
@@ -133,7 +135,7 @@ def build_sidebar(df):
 
 def main():
     st.title("SCADA System Intelligence Dashboard")
-    st.markdown("Monitor and analyze SCADA demand patterns using the public sample dataset.")
+    st.markdown("Monitor and analyze SCADA demand patterns using MongoDB data when configured, with sample-data fallback.")
 
     df = load_scada_data(DATA_FILE)
     if df.empty:
