@@ -33,9 +33,13 @@ from utils.charts import (
     build_weather_kpis,
     build_weather_correlation_summary,
     interpret_intraday_quadrant_analysis,
+    plot_forecast_profile,
+    plot_forecast_daily_context,
+    plot_forecast_weather_adjustment,
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
 from utils.data_loader import get_data_source_label
+from utils.forecasting import build_intraday_forecast, get_forecast_target_dates, summarize_forecast, weather_label
 from utils.agent_chat import (
     ask_scada_agent_with_trace,
     is_agent_chat_configured,
@@ -54,6 +58,7 @@ AVAILABLE_PAGES = [
     "Generation Mix",
     "Intraday Profile",
     "Weather Correlation",
+    "Forecasting",
 ]
 DEFERRED_PAGES = [
 ]
@@ -158,6 +163,8 @@ def main():
         render_intraday()
     elif page == "Weather Correlation":
         render_weather_correlation()
+    elif page == "Forecasting":
+        render_forecasting()
     elif page == "Agent Chat":
         render_agent_chat()
 
@@ -496,6 +503,172 @@ def render_weather_correlation():
             st.dataframe(comparison_df, use_container_width=True, hide_index=True)
         else:
             st.warning("Could not build the selected-date comparison table.")
+
+
+def render_forecasting():
+    st.header("Forecasting")
+    st.markdown(
+        "Backtest a weather-aware 96-block demand forecast using recent history. "
+        "This is the right first production step because we can measure forecast quality on known days before moving to fully forward-looking operations."
+    )
+
+    df = get_merged_scada_weather()
+    if df.empty:
+        df = load_scada_data(DATA_FILE)
+
+    start_date = st.session_state.get("start_date")
+    end_date = st.session_state.get("end_date")
+    if start_date and end_date and not df.empty:
+        df = filter_data_by_date(df, start_date, end_date)
+
+    if st.session_state.get("exclude_weekends", False) and "is_weekend" in df.columns:
+        df = df[~df["is_weekend"]]
+    if st.session_state.get("exclude_holidays", False) and "is_holiday" in df.columns:
+        df = df[~df["is_holiday"]]
+    if st.session_state.get("exclude_events", False) and "is_special_event" in df.columns:
+        df = df[~df["is_special_event"]]
+
+    if df.empty:
+        st.info("No records remain after the selected filters.")
+        return
+
+    weather_options = {
+        "Apparent Temperature": "apparent_temperature",
+        "Temperature": "temperature_2m",
+        "Relative Humidity": "relativehumidity_2m",
+        "Wind Speed": "windspeed_10m",
+        "Precipitation": "precipitation",
+        "Demand Only Baseline": "__demand_only__",
+    }
+
+    available_target_dates = get_forecast_target_dates(df, min_history_days=5)
+    if not available_target_dates:
+        st.warning("At least 6 filtered dates are needed to run the forecasting backtest.")
+        return
+
+    control_col1, control_col2, control_col3 = st.columns([1.2, 1, 1])
+    with control_col1:
+        target_date = st.selectbox(
+            "Target date to forecast",
+            options=available_target_dates,
+            format_func=lambda date_value: date_value.strftime("%d %b %Y"),
+            index=len(available_target_dates) - 1,
+            key="forecast_target_date",
+        )
+    with control_col2:
+        lookback_days = st.slider(
+            "Lookback days",
+            min_value=5,
+            max_value=min(14, len(sorted(df["date"].dt.date.unique())) - 1),
+            value=min(7, len(sorted(df["date"].dt.date.unique())) - 1),
+            step=1,
+            key="forecast_lookback_days",
+        )
+    with control_col3:
+        selected_weather_label = st.selectbox(
+            "Weather signal",
+            options=list(weather_options.keys()),
+            index=0,
+            key="forecast_weather_signal",
+        )
+
+    weather_col = weather_options[selected_weather_label]
+    actual_weather_col = None if weather_col == "__demand_only__" else weather_col
+    artifacts = build_intraday_forecast(
+        df,
+        target_date=target_date,
+        weather_col=actual_weather_col or "__no_weather__",
+        lookback_days=lookback_days,
+    )
+
+    if artifacts is None or artifacts.profile.empty:
+        st.warning("Forecast could not be built for the selected date and lookback window.")
+        return
+
+    summary = artifacts.summary
+    profile_df = artifacts.profile
+
+    kpi_cols = st.columns(5)
+    kpi_cols[0].metric("Forecast Peak", f"{summary['forecast_peak_mw']:,.0f} MW", summary["forecast_peak_time"])
+    kpi_cols[1].metric("Actual Peak", f"{summary['actual_peak_mw']:,.0f} MW", summary["actual_peak_time"])
+    kpi_cols[2].metric("Forecast Energy", f"{summary['forecast_energy_gwh']:.2f} GWh")
+    kpi_cols[3].metric("MAE", f"{summary['mae_mw']:,.0f} MW")
+    kpi_cols[4].metric("MAPE", f"{summary['mape'] * 100:.1f}%" if summary["mape"] == summary["mape"] else "NA")
+
+    st.success(summarize_forecast(summary))
+    st.caption(
+        "How to read this: the blue line is the forecast, the orange dotted line is the actual selected day, "
+        "and the shaded band is the model's operating confidence range."
+    )
+
+    fig_forecast = plot_forecast_profile(profile_df)
+    if fig_forecast:
+        st.plotly_chart(fig_forecast, use_container_width=True)
+    else:
+        st.warning("Could not build the 96-block forecast chart.")
+
+    context_col1, context_col2 = st.columns(2)
+    with context_col1:
+        fig_context = plot_forecast_daily_context(artifacts.recent_daily, summary)
+        if fig_context:
+            st.plotly_chart(fig_context, use_container_width=True)
+        else:
+            st.warning("Could not build the recent peak context chart.")
+
+    with context_col2:
+        if actual_weather_col:
+            fig_weather_adjustment = plot_forecast_weather_adjustment(profile_df, actual_weather_col)
+            if fig_weather_adjustment:
+                st.plotly_chart(fig_weather_adjustment, use_container_width=True)
+            else:
+                st.warning("Could not build the weather contribution chart.")
+        else:
+            st.info("Demand-only baseline is selected, so no weather adjustment chart is shown.")
+
+    st.subheader("Operational Notes")
+    for risk_flag in summary["risk_flags"]:
+        st.warning(risk_flag)
+
+    with st.expander("Forecast mathematics", expanded=False):
+        if actual_weather_col:
+            st.markdown(
+                f"""
+                For each block `b`, we build a same-block baseline from the previous `{summary['lookback_days']}` days:
+
+                `baseline_b = mean(demand_b over lookback days)`
+
+                `beta_b = cov(weather_b, demand_b) / var(weather_b)`
+
+                `forecast_b = baseline_b + beta_b * (target_weather_b - mean(weather_b))`
+
+                The weather term uses **{weather_label(actual_weather_col)}**. Confidence bands are built from recent block-level residual spread.
+                """
+            )
+        else:
+            st.markdown(
+                f"""
+                For each block `b`, we use the mean of the same block across the previous `{summary['lookback_days']}` days:
+
+                `forecast_b = mean(demand_b over lookback days)`
+
+                Confidence bands are built from recent block-level variability.
+                """
+            )
+
+    st.subheader("Block-Level Forecast Table")
+    display_columns = [
+        "block_no",
+        "time",
+        "forecast_demand",
+        "forecast_lower",
+        "forecast_upper",
+        "demand_energy",
+        "demand_mean",
+        "weather_adjustment",
+    ]
+    if actual_weather_col and actual_weather_col in profile_df.columns:
+        display_columns.extend([actual_weather_col, "weather_mean", "weather_beta"])
+    st.dataframe(profile_df[display_columns], use_container_width=True, hide_index=True)
 
 
 def render_agent_chat():

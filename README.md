@@ -13,6 +13,7 @@ This first public release includes:
 - Generation mix analysis
 - Intraday profile analysis
 - Weather correlation with public sample weather data
+- Forecasting with weather-aware intraday backtesting
 - Agent chat using public sample data
 - MongoDB-backed operation when configured, with sample fallback
 

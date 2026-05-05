@@ -2,6 +2,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 from utils.data_loader import get_daily_aggregations,get_intraday_profile
+from utils.forecasting import weather_label
 
 def plot_demand_trend(df: pd.DataFrame):
     """Plot total daily demand energy in GWh."""
@@ -1353,3 +1354,146 @@ def build_weather_correlation_summary(df: pd.DataFrame, weather_col="temperature
         f"Average demand is {avg_demand:,.0f} MW. Average {label} is {avg_weather:,.1f}. "
         f"The demand relationship with {label} is {strength} {direction} (correlation {corr:.2f})."
     )
+
+
+def plot_forecast_profile(profile_df: pd.DataFrame):
+    """Plot forecast vs actual demand with an uncertainty band across 96 blocks."""
+    if profile_df.empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=profile_df["time"],
+            y=profile_df["forecast_upper"],
+            mode="lines",
+            line=dict(width=0),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=profile_df["time"],
+            y=profile_df["forecast_lower"],
+            mode="lines",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor="rgba(46, 134, 171, 0.16)",
+            name="Forecast band",
+            hoverinfo="skip",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=profile_df["time"],
+            y=profile_df["forecast_demand"],
+            mode="lines",
+            name="Forecast Demand",
+            line=dict(color="#1D4ED8", width=3),
+            hovertemplate="Time %{x}<br>Forecast %{y:,.0f} MW<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=profile_df["time"],
+            y=profile_df["demand_energy"],
+            mode="lines",
+            name="Actual Demand",
+            line=dict(color="#E76F51", width=2, dash="dot"),
+            hovertemplate="Time %{x}<br>Actual %{y:,.0f} MW<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title="Selected-Day 96-Block Forecast vs Actual Demand",
+        xaxis_title="Time",
+        yaxis_title="Demand (MW)",
+        template="plotly_white",
+        hovermode="x unified",
+        legend_title_text="Series",
+    )
+    return fig
+
+
+def plot_forecast_daily_context(recent_daily_df: pd.DataFrame, summary: dict):
+    """Show recent daily peak context with selected-day forecast and actual."""
+    if recent_daily_df.empty or not summary:
+        return None
+
+    context_df = recent_daily_df.sort_values("date").copy()
+    forecast_date = pd.Timestamp(summary["target_date"])
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=context_df["date"],
+            y=context_df["peak_demand"],
+            mode="lines+markers",
+            name="Recent Actual Peak",
+            line=dict(color="#6B7280", width=2),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[forecast_date],
+            y=[summary["actual_peak_mw"]],
+            mode="markers",
+            name="Target-Day Actual Peak",
+            marker=dict(size=11, color="#E76F51", symbol="circle"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[forecast_date],
+            y=[summary["forecast_peak_mw"]],
+            mode="markers",
+            name="Target-Day Forecast Peak",
+            marker=dict(size=12, color="#1D4ED8", symbol="diamond"),
+        )
+    )
+    fig.update_layout(
+        title="Forecasted Peak vs Recent Daily Peak Context",
+        xaxis_title="Date",
+        yaxis_title="Peak Demand (MW)",
+        template="plotly_white",
+        hovermode="x unified",
+    )
+    return fig
+
+
+def plot_forecast_weather_adjustment(profile_df: pd.DataFrame, weather_col: str):
+    """Show how weather shifts the forecast away from the same-block baseline."""
+    if profile_df.empty or weather_col not in profile_df.columns:
+        return None
+
+    label = weather_label(weather_col)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=profile_df["time"],
+            y=profile_df["weather_adjustment"],
+            name="Weather Adjustment",
+            marker_color="#2A9D8F",
+            hovertemplate="Time %{x}<br>Adjustment %{y:,.0f} MW<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=profile_df["time"],
+            y=profile_df[weather_col],
+            mode="lines",
+            name=label,
+            line=dict(color="#F4A261", width=2, dash="dot"),
+            yaxis="y2",
+            hovertemplate=f"Time %{{x}}<br>{label} %{{y:.1f}}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=f"Weather Contribution to the Forecast: {label}",
+        xaxis_title="Time",
+        yaxis_title="Forecast Adjustment (MW)",
+        yaxis2=dict(title=label, overlaying="y", side="right"),
+        template="plotly_white",
+        hovermode="x unified",
+    )
+    return fig
