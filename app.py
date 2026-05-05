@@ -26,6 +26,7 @@ from utils.charts import (
     plot_intraday_weather_overlay,
     plot_multi_date_weather_comparison,
     plot_intraday_quadrant_analysis,
+    plot_intraday_quadrant_diagnostic_scatter,
     build_intraday_weather_summary,
     build_intraday_quadrant_summary,
     build_multi_date_weather_comparison,
@@ -421,6 +422,41 @@ def render_weather_correlation():
             st.dataframe(quadrant_summary, use_container_width=True, hide_index=True)
         else:
             st.warning("Could not build the quadrant summary table.")
+
+        st.markdown(
+            f"""
+            **How the bifurcation is calculated**
+
+            For each 15-minute block of the selected day, we compare it against the average of the **other filtered days**
+            at the **same block number**.
+
+            `demand_z = (selected_block_demand - baseline_block_mean_demand) / baseline_block_std_demand`
+
+            `weather_z = (selected_block_{weather_col} - baseline_block_mean_{weather_col}) / baseline_block_std_{weather_col}`
+
+            Then we classify using the selected threshold `T = {z_threshold:.1f}`:
+
+            - `|demand_z| < T` -> Normal Demand
+            - `|demand_z| >= T` -> Abnormal Demand
+            - `|weather_z| < T` -> Normal Weather
+            - `|weather_z| >= T` -> Abnormal Weather
+
+            The **2x2 quadrant chart** is the best operational view because it shows the final decision cleanly.
+            The **diagnostic scatter** below is the more mathematically complete view because it preserves direction
+            and exact signed z-scores.
+            """
+        )
+
+        with st.expander("Diagnostic view for analysts", expanded=False):
+            st.caption(
+                "This view keeps the signed z-scores. Use it when you want the exact magnitude and direction of deviation, "
+                "not just the final quadrant classification."
+            )
+            fig_diagnostic = plot_intraday_quadrant_diagnostic_scatter(df, selected_date, weather_col, z_threshold)
+            if fig_diagnostic:
+                st.plotly_chart(fig_diagnostic, use_container_width=True)
+            else:
+                st.warning("Could not build the diagnostic quadrant scatter.")
 
     with comparison_tab:
         available_dates = sorted(df["date"].dt.date.unique())

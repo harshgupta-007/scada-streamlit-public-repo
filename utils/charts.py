@@ -1146,6 +1146,61 @@ def plot_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col
     return fig
 
 
+def plot_intraday_quadrant_diagnostic_scatter(df: pd.DataFrame, selected_date, weather_col="temperature_2m", z_threshold=1.0):
+    """Plot the continuous signed-z diagnostic view behind the 2x2 classification."""
+    quadrant_df = build_intraday_quadrant_analysis(df, selected_date, weather_col, z_threshold)
+    if quadrant_df.empty:
+        return None
+
+    weather_label = _weather_label(weather_col)
+    color_map = {
+        "Normal Demand + Normal Weather": "#4C956C",
+        "Abnormal Demand + Normal Weather": "#D62828",
+        "Normal Demand + Abnormal Weather": "#F4A261",
+        "Abnormal Demand + Abnormal Weather": "#264653",
+    }
+    x_max = max(float(quadrant_df["weather_z"].abs().max()), z_threshold) + 0.25
+    y_max = max(float(quadrant_df["demand_z"].abs().max()), z_threshold) + 0.25
+
+    fig = px.scatter(
+        quadrant_df,
+        x="weather_z",
+        y="demand_z",
+        color="quadrant",
+        color_discrete_map=color_map,
+        title=f"Diagnostic Scatter: Signed Demand vs {weather_label} z-score",
+        labels={
+            "weather_z": f"{weather_label} z-score",
+            "demand_z": "Demand z-score",
+            "quadrant": "Classification",
+        },
+        hover_data={
+            "time": True,
+            "block_no": True,
+            "demand_energy": ":,.0f",
+            weather_col: ":.1f",
+            "demand_z": ":.2f",
+            "weather_z": ":.2f",
+            "demand_status": True,
+            "weather_status": True,
+        },
+        template="plotly_white",
+    )
+    fig.add_hline(y=0, line_dash="dot", line_color="#94A3B8")
+    fig.add_vline(x=0, line_dash="dot", line_color="#94A3B8")
+    fig.add_hline(y=z_threshold, line_dash="dash", line_color="#64748B")
+    fig.add_hline(y=-z_threshold, line_dash="dash", line_color="#64748B")
+    fig.add_vline(x=z_threshold, line_dash="dash", line_color="#64748B")
+    fig.add_vline(x=-z_threshold, line_dash="dash", line_color="#64748B")
+    fig.update_traces(marker=dict(size=9, opacity=0.85))
+    fig.update_layout(
+        xaxis=dict(range=[-x_max, x_max]),
+        yaxis=dict(range=[-y_max, y_max]),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
 def build_intraday_quadrant_summary(df: pd.DataFrame, selected_date, weather_col="temperature_2m", z_threshold=1.0):
     quadrant_df = build_intraday_quadrant_analysis(df, selected_date, weather_col, z_threshold)
     if quadrant_df.empty:
