@@ -1031,6 +1031,8 @@ def build_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_co
     merged["time"] = merged["block_no"].apply(block_to_time)
     merged["demand_z"] = (merged["demand_energy"] - merged["demand_mean"]) / merged["demand_std"]
     merged["weather_z"] = (merged[weather_col] - merged["weather_mean"]) / merged["weather_std"]
+    merged["demand_abs_z"] = merged["demand_z"].abs()
+    merged["weather_abs_z"] = merged["weather_z"].abs()
     merged["demand_status"] = merged["demand_z"].abs().apply(lambda value: "Abnormal" if value >= z_threshold else "Normal")
     merged["weather_status"] = merged["weather_z"].abs().apply(lambda value: "Abnormal" if value >= z_threshold else "Normal")
     merged["quadrant"] = merged["demand_status"] + " Demand + " + merged["weather_status"] + " Weather"
@@ -1051,16 +1053,19 @@ def plot_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col
         "Abnormal Demand + Abnormal Weather": "#264653",
     }
 
+    x_max = max(float(quadrant_df["weather_abs_z"].max()), z_threshold) + 0.25
+    y_max = max(float(quadrant_df["demand_abs_z"].max()), z_threshold) + 0.25
+
     fig = px.scatter(
         quadrant_df,
-        x="weather_z",
-        y="demand_z",
+        x="weather_abs_z",
+        y="demand_abs_z",
         color="quadrant",
         color_discrete_map=color_map,
-        title=f"Selected-Day Quadrant Analysis: Demand vs {weather_label} Anomaly",
+        title=f"Selected-Day Quadrant Analysis: Demand vs {weather_label} Abnormality",
         labels={
-            "weather_z": f"{weather_label} anomaly score",
-            "demand_z": "Demand anomaly score",
+            "weather_abs_z": f"{weather_label} abnormality score",
+            "demand_abs_z": "Demand abnormality score",
             "quadrant": "Classification",
         },
         hover_data={
@@ -1070,17 +1075,55 @@ def plot_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col
             weather_col: ":.1f",
             "demand_z": ":.2f",
             "weather_z": ":.2f",
+            "demand_abs_z": ":.2f",
+            "weather_abs_z": ":.2f",
         },
         template="plotly_white",
     )
-    fig.add_hline(y=0, line_dash="dash", line_color="#94A3B8")
-    fig.add_vline(x=0, line_dash="dash", line_color="#94A3B8")
-    fig.add_annotation(x=0.02, y=0.98, xref="paper", yref="paper", text="Abnormal Demand / Normal Weather", showarrow=False)
-    fig.add_annotation(x=0.98, y=0.98, xref="paper", yref="paper", text="Abnormal Demand / Abnormal Weather", showarrow=False, xanchor="right")
-    fig.add_annotation(x=0.02, y=0.02, xref="paper", yref="paper", text="Normal Demand / Normal Weather", showarrow=False, yanchor="bottom")
-    fig.add_annotation(x=0.98, y=0.02, xref="paper", yref="paper", text="Normal Demand / Abnormal Weather", showarrow=False, xanchor="right", yanchor="bottom")
+    fig.add_vrect(x0=0, x1=z_threshold, fillcolor="#E8F5E9", opacity=0.35, line_width=0)
+    fig.add_vrect(x0=z_threshold, x1=x_max, fillcolor="#FFF3E0", opacity=0.35, line_width=0)
+    fig.add_hrect(y0=0, y1=z_threshold, fillcolor="#E8F5E9", opacity=0.2, line_width=0)
+    fig.add_hrect(y0=z_threshold, y1=y_max, fillcolor="#FDECEC", opacity=0.2, line_width=0)
+    fig.add_hline(y=z_threshold, line_dash="dash", line_color="#64748B", annotation_text="Demand threshold")
+    fig.add_vline(x=z_threshold, line_dash="dash", line_color="#64748B", annotation_text="Weather threshold")
+    fig.add_annotation(
+        x=z_threshold / 2,
+        y=y_max - 0.05,
+        text="Abnormal Demand / Normal Weather",
+        showarrow=False,
+        yanchor="top",
+        font=dict(size=12),
+    )
+    fig.add_annotation(
+        x=(z_threshold + x_max) / 2,
+        y=y_max - 0.05,
+        text="Abnormal Demand / Abnormal Weather",
+        showarrow=False,
+        yanchor="top",
+        font=dict(size=12),
+    )
+    fig.add_annotation(
+        x=z_threshold / 2,
+        y=0.05,
+        text="Normal Demand / Normal Weather",
+        showarrow=False,
+        yanchor="bottom",
+        font=dict(size=12),
+    )
+    fig.add_annotation(
+        x=(z_threshold + x_max) / 2,
+        y=0.05,
+        text="Normal Demand / Abnormal Weather",
+        showarrow=False,
+        yanchor="bottom",
+        font=dict(size=12),
+    )
     fig.update_traces(marker=dict(size=9, opacity=0.85))
-    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_layout(
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis=dict(range=[0, x_max]),
+        yaxis=dict(range=[0, y_max]),
+    )
     return fig
 
 
