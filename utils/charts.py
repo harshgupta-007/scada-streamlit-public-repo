@@ -1040,11 +1040,12 @@ def build_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_co
 
 
 def plot_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col="temperature_2m", z_threshold=1.0):
-    """Plot selected-day blocks on demand-vs-weather anomaly quadrants."""
+    """Plot selected-day blocks in a true 2x2 threshold-based quadrant layout."""
     quadrant_df = build_intraday_quadrant_analysis(df, selected_date, weather_col, z_threshold)
     if quadrant_df.empty:
         return None
 
+    quadrant_df = quadrant_df.copy()
     weather_label = _weather_label(weather_col)
     color_map = {
         "Normal Demand + Normal Weather": "#4C956C",
@@ -1053,19 +1054,20 @@ def plot_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col
         "Abnormal Demand + Abnormal Weather": "#264653",
     }
 
-    x_max = max(float(quadrant_df["weather_abs_z"].max()), z_threshold) + 0.25
-    y_max = max(float(quadrant_df["demand_abs_z"].max()), z_threshold) + 0.25
+    quadrant_df["weather_bucket"] = quadrant_df["weather_status"].map({"Normal": 0, "Abnormal": 1})
+    quadrant_df["demand_bucket"] = quadrant_df["demand_status"].map({"Normal": 0, "Abnormal": 1})
+    # deterministic light jitter by block number so points separate without random behavior
+    quadrant_df["x_plot"] = quadrant_df["weather_bucket"] + (((quadrant_df["block_no"] * 7) % 17) / 16 - 0.5) * 0.35
+    quadrant_df["y_plot"] = quadrant_df["demand_bucket"] + (((quadrant_df["block_no"] * 11) % 19) / 18 - 0.5) * 0.35
 
     fig = px.scatter(
         quadrant_df,
-        x="weather_abs_z",
-        y="demand_abs_z",
+        x="x_plot",
+        y="y_plot",
         color="quadrant",
         color_discrete_map=color_map,
-        title=f"Selected-Day Quadrant Analysis: Demand vs {weather_label} Abnormality",
+        title=f"Selected-Day Quadrant Classification: Demand vs {weather_label}",
         labels={
-            "weather_abs_z": f"{weather_label} abnormality score",
-            "demand_abs_z": "Demand abnormality score",
             "quadrant": "Classification",
         },
         hover_data={
@@ -1077,52 +1079,69 @@ def plot_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col
             "weather_z": ":.2f",
             "demand_abs_z": ":.2f",
             "weather_abs_z": ":.2f",
+            "demand_status": True,
+            "weather_status": True,
+            "x_plot": False,
+            "y_plot": False,
         },
         template="plotly_white",
     )
-    fig.add_vrect(x0=0, x1=z_threshold, fillcolor="#E8F5E9", opacity=0.35, line_width=0)
-    fig.add_vrect(x0=z_threshold, x1=x_max, fillcolor="#FFF3E0", opacity=0.35, line_width=0)
-    fig.add_hrect(y0=0, y1=z_threshold, fillcolor="#E8F5E9", opacity=0.2, line_width=0)
-    fig.add_hrect(y0=z_threshold, y1=y_max, fillcolor="#FDECEC", opacity=0.2, line_width=0)
-    fig.add_hline(y=z_threshold, line_dash="dash", line_color="#64748B", annotation_text="Demand threshold")
-    fig.add_vline(x=z_threshold, line_dash="dash", line_color="#64748B", annotation_text="Weather threshold")
+    fig.add_vrect(x0=-0.5, x1=0.5, fillcolor="#E8F5E9", opacity=0.35, line_width=0)
+    fig.add_vrect(x0=0.5, x1=1.5, fillcolor="#FFF3E0", opacity=0.35, line_width=0)
+    fig.add_hrect(y0=-0.5, y1=0.5, fillcolor="#E8F5E9", opacity=0.2, line_width=0)
+    fig.add_hrect(y0=0.5, y1=1.5, fillcolor="#FDECEC", opacity=0.2, line_width=0)
+    fig.add_hline(y=0.5, line_dash="dash", line_color="#64748B")
+    fig.add_vline(x=0.5, line_dash="dash", line_color="#64748B")
     fig.add_annotation(
-        x=z_threshold / 2,
-        y=y_max - 0.05,
+        x=0,
+        y=1.42,
         text="Abnormal Demand / Normal Weather",
         showarrow=False,
         yanchor="top",
         font=dict(size=12),
     )
     fig.add_annotation(
-        x=(z_threshold + x_max) / 2,
-        y=y_max - 0.05,
+        x=1,
+        y=1.42,
         text="Abnormal Demand / Abnormal Weather",
         showarrow=False,
         yanchor="top",
         font=dict(size=12),
     )
     fig.add_annotation(
-        x=z_threshold / 2,
-        y=0.05,
+        x=0,
+        y=-0.42,
         text="Normal Demand / Normal Weather",
         showarrow=False,
         yanchor="bottom",
         font=dict(size=12),
     )
     fig.add_annotation(
-        x=(z_threshold + x_max) / 2,
-        y=0.05,
+        x=1,
+        y=-0.42,
         text="Normal Demand / Abnormal Weather",
         showarrow=False,
         yanchor="bottom",
         font=dict(size=12),
     )
-    fig.update_traces(marker=dict(size=9, opacity=0.85))
+    fig.add_annotation(x=0.5, y=1.48, text=f"Threshold = {z_threshold:.1f}", showarrow=False, font=dict(size=12, color="#64748B"))
+    fig.update_traces(marker=dict(size=10, opacity=0.85))
     fig.update_layout(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis=dict(range=[0, x_max]),
-        yaxis=dict(range=[0, y_max]),
+        xaxis=dict(
+            range=[-0.5, 1.5],
+            tickmode="array",
+            tickvals=[0, 1],
+            ticktext=["Normal Weather", "Abnormal Weather"],
+            title=f"{weather_label} classification",
+        ),
+        yaxis=dict(
+            range=[-0.5, 1.5],
+            tickmode="array",
+            tickvals=[0, 1],
+            ticktext=["Normal Demand", "Abnormal Demand"],
+            title="Demand classification",
+        ),
     )
     return fig
 
