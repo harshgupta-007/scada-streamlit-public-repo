@@ -25,10 +25,13 @@ from utils.charts import (
     plot_intraday_weather_scatter,
     plot_intraday_weather_overlay,
     plot_multi_date_weather_comparison,
+    plot_intraday_quadrant_analysis,
     build_intraday_weather_summary,
+    build_intraday_quadrant_summary,
     build_multi_date_weather_comparison,
     build_weather_kpis,
     build_weather_correlation_summary,
+    interpret_intraday_quadrant_analysis,
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
 from utils.data_loader import get_data_source_label
@@ -390,6 +393,34 @@ def render_weather_correlation():
                 st.plotly_chart(fig_block_scatter, use_container_width=True)
             else:
                 st.warning("Could not build the selected-day block scatter chart.")
+
+        st.subheader("Quadrant Analysis")
+        z_threshold = st.slider(
+            "Abnormality threshold (z-score)",
+            min_value=0.5,
+            max_value=2.5,
+            value=1.0,
+            step=0.1,
+            key="weather_quadrant_threshold",
+            help="Blocks beyond this same-block baseline deviation are classified as abnormal.",
+        )
+        st.info(
+            "This view compares each 15-minute block of the selected day against the average of the other filtered days "
+            "at the same block number, then classifies demand and weather as normal or abnormal."
+        )
+        st.success(interpret_intraday_quadrant_analysis(df, selected_date, weather_col, z_threshold))
+
+        fig_quadrant = plot_intraday_quadrant_analysis(df, selected_date, weather_col, z_threshold)
+        if fig_quadrant:
+            st.plotly_chart(fig_quadrant, use_container_width=True)
+        else:
+            st.warning("Could not build the selected-day quadrant analysis chart.")
+
+        quadrant_summary = build_intraday_quadrant_summary(df, selected_date, weather_col, z_threshold)
+        if not quadrant_summary.empty:
+            st.dataframe(quadrant_summary, use_container_width=True, hide_index=True)
+        else:
+            st.warning("Could not build the quadrant summary table.")
 
     with comparison_tab:
         available_dates = sorted(df["date"].dt.date.unique())

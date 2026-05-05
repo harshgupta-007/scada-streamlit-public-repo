@@ -994,6 +994,142 @@ def plot_multi_date_weather_comparison(df: pd.DataFrame, weather_col="temperatur
     return fig
 
 
+def build_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col="temperature_2m", z_threshold=1.0):
+    """Classify selected-day blocks into 4 demand-weather quadrants using same-block baseline z-scores."""
+    if df.empty or weather_col not in df.columns:
+        return pd.DataFrame()
+
+    working_df = df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"])
+    selected_date = pd.to_datetime(selected_date).date()
+
+    day_df = working_df[working_df["date"].dt.date == selected_date].copy()
+    baseline_df = working_df[working_df["date"].dt.date != selected_date].copy()
+    if day_df.empty or baseline_df.empty:
+        return pd.DataFrame()
+
+    baseline = (
+        baseline_df.groupby("block_no")[["demand_energy", weather_col]]
+        .agg(["mean", "std"])
+        .reset_index()
+    )
+    baseline.columns = [
+        "block_no",
+        "demand_mean",
+        "demand_std",
+        "weather_mean",
+        "weather_std",
+    ]
+
+    merged = day_df.merge(baseline, on="block_no", how="left")
+    merged = merged.dropna(subset=["demand_energy", weather_col, "demand_mean", "weather_mean"])
+    if merged.empty:
+        return pd.DataFrame()
+
+    merged["demand_std"] = merged["demand_std"].replace(0, pd.NA).fillna(1.0)
+    merged["weather_std"] = merged["weather_std"].replace(0, pd.NA).fillna(1.0)
+    merged["time"] = merged["block_no"].apply(block_to_time)
+    merged["demand_z"] = (merged["demand_energy"] - merged["demand_mean"]) / merged["demand_std"]
+    merged["weather_z"] = (merged[weather_col] - merged["weather_mean"]) / merged["weather_std"]
+    merged["demand_status"] = merged["demand_z"].abs().apply(lambda value: "Abnormal" if value >= z_threshold else "Normal")
+    merged["weather_status"] = merged["weather_z"].abs().apply(lambda value: "Abnormal" if value >= z_threshold else "Normal")
+    merged["quadrant"] = merged["demand_status"] + " Demand + " + merged["weather_status"] + " Weather"
+    return merged
+
+
+def plot_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col="temperature_2m", z_threshold=1.0):
+    """Plot selected-day blocks on demand-vs-weather anomaly quadrants."""
+    quadrant_df = build_intraday_quadrant_analysis(df, selected_date, weather_col, z_threshold)
+    if quadrant_df.empty:
+        return None
+
+    weather_label = _weather_label(weather_col)
+    color_map = {
+        "Normal Demand + Normal Weather": "#4C956C",
+        "Abnormal Demand + Normal Weather": "#D62828",
+        "Normal Demand + Abnormal Weather": "#F4A261",
+        "Abnormal Demand + Abnormal Weather": "#264653",
+    }
+
+    fig = px.scatter(
+        quadrant_df,
+        x="weather_z",
+        y="demand_z",
+        color="quadrant",
+        color_discrete_map=color_map,
+        title=f"Selected-Day Quadrant Analysis: Demand vs {weather_label} Anomaly",
+        labels={
+            "weather_z": f"{weather_label} anomaly score",
+            "demand_z": "Demand anomaly score",
+            "quadrant": "Classification",
+        },
+        hover_data={
+            "time": True,
+            "block_no": True,
+            "demand_energy": ":,.0f",
+            weather_col: ":.1f",
+            "demand_z": ":.2f",
+            "weather_z": ":.2f",
+        },
+        template="plotly_white",
+    )
+    fig.add_hline(y=0, line_dash="dash", line_color="#94A3B8")
+    fig.add_vline(x=0, line_dash="dash", line_color="#94A3B8")
+    fig.add_annotation(x=0.02, y=0.98, xref="paper", yref="paper", text="Abnormal Demand / Normal Weather", showarrow=False)
+    fig.add_annotation(x=0.98, y=0.98, xref="paper", yref="paper", text="Abnormal Demand / Abnormal Weather", showarrow=False, xanchor="right")
+    fig.add_annotation(x=0.02, y=0.02, xref="paper", yref="paper", text="Normal Demand / Normal Weather", showarrow=False, yanchor="bottom")
+    fig.add_annotation(x=0.98, y=0.02, xref="paper", yref="paper", text="Normal Demand / Abnormal Weather", showarrow=False, xanchor="right", yanchor="bottom")
+    fig.update_traces(marker=dict(size=9, opacity=0.85))
+    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    return fig
+
+
+def build_intraday_quadrant_summary(df: pd.DataFrame, selected_date, weather_col="temperature_2m", z_threshold=1.0):
+    quadrant_df = build_intraday_quadrant_analysis(df, selected_date, weather_col, z_threshold)
+    if quadrant_df.empty:
+        return pd.DataFrame()
+
+    summary = (
+        quadrant_df.groupby("quadrant")
+        .size()
+        .reset_index(name="Blocks")
+        .sort_values("Blocks", ascending=False)
+    )
+    summary["Share (%)"] = (summary["Blocks"] / summary["Blocks"].sum() * 100).round(1)
+    return summary
+
+
+def interpret_intraday_quadrant_analysis(df: pd.DataFrame, selected_date, weather_col="temperature_2m", z_threshold=1.0):
+    summary = build_intraday_quadrant_summary(df, selected_date, weather_col, z_threshold)
+    if summary.empty:
+        return "Quadrant analysis is not available for the selected day."
+
+    top_row = summary.iloc[0]
+    top_quadrant = top_row["quadrant"]
+    top_share = top_row["Share (%)"]
+    weather_label = _weather_label(weather_col).lower()
+
+    if top_quadrant == "Abnormal Demand + Abnormal Weather":
+        return (
+            f"{top_share:.1f}% of blocks fall in Abnormal Demand + Abnormal Weather. "
+            f"This suggests {weather_label} is likely a meaningful driver of the day’s unusual demand pattern."
+        )
+    if top_quadrant == "Abnormal Demand + Normal Weather":
+        return (
+            f"{top_share:.1f}% of blocks fall in Abnormal Demand + Normal Weather. "
+            f"This suggests non-weather operational factors may be driving unusual demand on the selected day."
+        )
+    if top_quadrant == "Normal Demand + Abnormal Weather":
+        return (
+            f"{top_share:.1f}% of blocks fall in Normal Demand + Abnormal Weather. "
+            f"Weather was unusual, but demand remained comparatively stable across the day."
+        )
+    return (
+        f"{top_share:.1f}% of blocks fall in Normal Demand + Normal Weather. "
+        f"The selected day broadly follows its normal intraday demand and {weather_label} pattern."
+    )
+
+
 def build_multi_date_weather_comparison(df: pd.DataFrame, weather_col="temperature_2m", selected_dates=None):
     """Build a compact table for selected-date weather and demand comparison."""
     if df.empty or weather_col not in df.columns or not selected_dates:
