@@ -72,6 +72,13 @@ st.set_page_config(
 )
 
 
+RISK_STYLES = {
+    "Low": {"bg": "#E8F7EE", "border": "#4C956C", "text": "#1E5631"},
+    "Moderate": {"bg": "#FFF4E5", "border": "#F4A261", "text": "#8A5300"},
+    "High": {"bg": "#FDECEC", "border": "#D62828", "text": "#8B1E1E"},
+}
+
+
 def build_sidebar(df):
     if ASSET_IMAGE.exists():
         st.sidebar.image(str(ASSET_IMAGE), use_container_width=True)
@@ -140,6 +147,35 @@ def build_sidebar(df):
     st.sidebar.caption("Deferred features: " + ", ".join(DEFERRED_PAGES))
 
     return page
+
+
+def render_risk_card(title: str, level: str, metric: str, detail: str):
+    style = RISK_STYLES.get(level, RISK_STYLES["Low"])
+    st.markdown(
+        f"""
+        <div style="
+            background:{style['bg']};
+            border-left:6px solid {style['border']};
+            border-radius:12px;
+            padding:0.9rem 1rem;
+            min-height:132px;
+        ">
+            <div style="font-size:0.8rem; font-weight:700; color:{style['text']}; text-transform:uppercase; letter-spacing:0.04em;">
+                {title}
+            </div>
+            <div style="font-size:1.4rem; font-weight:800; color:{style['text']}; margin-top:0.25rem;">
+                {level}
+            </div>
+            <div style="font-size:1rem; font-weight:600; color:#334155; margin-top:0.15rem;">
+                {metric}
+            </div>
+            <div style="font-size:0.9rem; color:#475569; margin-top:0.45rem; line-height:1.35;">
+                {detail}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def main():
@@ -596,6 +632,24 @@ def render_forecasting():
     kpi_cols[4].metric("MAPE", f"{summary['mape'] * 100:.1f}%" if summary["mape"] == summary["mape"] else "NA")
 
     st.success(summarize_forecast(summary))
+    st.subheader("Risk Classification")
+    alert_cols = st.columns(4)
+    with alert_cols[0]:
+        render_risk_card(
+            "Likely Peak Window",
+            summary["overall_risk_level"],
+            summary["peak_window_label"],
+            f"Forecast peak of {summary['forecast_peak_mw']:,.0f} MW is most likely inside this operating window.",
+        )
+    for idx, risk_card in enumerate(summary["risk_cards"], start=1):
+        with alert_cols[idx]:
+            render_risk_card(
+                risk_card["title"],
+                risk_card["level"],
+                risk_card["metric"],
+                risk_card["detail"],
+            )
+
     st.caption(
         "How to read this: the blue line is the forecast, the orange dotted line is the actual selected day, "
         "and the shaded band is the model's operating confidence range."
@@ -725,7 +779,8 @@ def render_agent_chat():
         "`Did temperature affect peak demand?`  "
         "`Give intraday weather-demand analysis for 26 Nov.`  "
         "`Which day had the highest temperature and demand?`  "
-        "`Compare 1 Nov and 26 Nov with weather.`"
+        "`Compare 1 Nov and 26 Nov with weather.`  "
+        "`What is tomorrow's likely peak window?`"
     )
 
     if "agent_messages" not in st.session_state:

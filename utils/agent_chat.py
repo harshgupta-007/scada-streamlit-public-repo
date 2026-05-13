@@ -4,6 +4,7 @@ import re
 import streamlit as st
 import uuid
 from typing import Dict, List, Optional
+from utils.forecasting import build_intraday_forecast, get_forecast_target_dates
 
 try:
     from langsmith import Client, trace, traceable, tracing_context
@@ -126,6 +127,8 @@ def _configure_langsmith_environment() -> Dict[str, str]:
 
 def classify_prompt(prompt: str) -> str:
     prompt_lower = prompt.lower()
+    if any(word in prompt_lower for word in ["forecast", "predict", "tomorrow", "next day", "likely peak window", "outlook"]):
+        return "forecast"
     if any(word in prompt_lower for word in ["compare", "versus", "vs", "difference", "between"]):
         return "comparison"
     if any(word in prompt_lower for word in ["intraday", "block", "selected day", "single day", "96"]):
@@ -602,6 +605,57 @@ def tool_weather_intraday(df: pd.DataFrame, prompt: str) -> str:
     )
 
 
+def tool_forecast_outlook(df: pd.DataFrame, prompt: str) -> str:
+    working_df = df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"])
+    available_target_dates = get_forecast_target_dates(working_df, min_history_days=5)
+    if not available_target_dates:
+        return "Tool: forecast_outlook\n- At least 6 dates are required to generate a forecast backtest."
+
+    requested_dates = _parse_user_dates(prompt, working_df)
+    matched_dates = [date.date() for date in requested_dates if date.date() in set(available_target_dates)]
+    target_date = matched_dates[0] if matched_dates else available_target_dates[-1]
+    weather_col = _preferred_weather_column(prompt, working_df) or "__no_weather__"
+
+    artifacts = build_intraday_forecast(
+        working_df,
+        target_date=target_date,
+        weather_col=weather_col,
+        lookback_days=7,
+    )
+    if artifacts is None:
+        return "Tool: forecast_outlook\n- Forecast backtest could not be generated for the requested setup."
+
+    summary = artifacts.summary
+    lines = [
+        "Tool: forecast_outlook",
+        (
+            f"- Forecast mode: historical next-day backtest for {summary['target_date']} "
+            f"using the previous {summary['lookback_days']} selected days."
+        ),
+        (
+            f"- Likely peak window: {summary['peak_window_label']} with predicted peak "
+            f"{summary['forecast_peak_mw']:,.0f} MW."
+        ),
+        (
+            f"- Forecast daily energy: {summary['forecast_energy_gwh']:.2f} GWh; "
+            f"average demand: {summary['forecast_avg_mw']:,.0f} MW."
+        ),
+        (
+            f"- Backtest quality on that day: MAE {summary['mae_mw']:,.0f} MW, "
+            f"MAPE {summary['mape'] * 100:.1f}%."
+            if pd.notna(summary["mape"])
+            else f"- Backtest quality on that day: MAE {summary['mae_mw']:,.0f} MW."
+        ),
+        f"- Overall alert level: {summary['overall_risk_level']}.",
+    ]
+    for risk_card in summary["risk_cards"]:
+        lines.append(
+            f"- {risk_card['title']}: {risk_card['level']} ({risk_card['metric']}). {risk_card['detail']}"
+        )
+    return "\n".join(lines)
+
+
 def run_relevant_tools(prompt: str, df: pd.DataFrame) -> str:
     """Run deterministic local dataframe tools based on the user question."""
     prompt_lower = prompt.lower()
@@ -636,6 +690,8 @@ def run_relevant_tools(prompt: str, df: pd.DataFrame) -> str:
         tools.append(tool_ramp_analysis)
     if any(word in prompt_lower for word in ["anomaly", "anomalies", "spike", "outlier", "abnormal"]):
         tools.append(tool_anomaly_scan)
+    if any(word in prompt_lower for word in ["forecast", "predict", "tomorrow", "next day", "likely peak", "outlook"]):
+        tools.append(lambda data: tool_forecast_outlook(data, prompt))
     if weather_requested:
         tools.append(tool_weather_summary)
     if weather_requested and any(word in prompt_lower for word in ["highest", "lowest", "maximum", "minimum", "max", "min", "peak"]):
@@ -697,6 +753,7 @@ Rules:
 - Keep answers concise, engineering-focused, and suitable for power-system stakeholders.
 - Use MW for power and GWh for energy.
 - Weather data is public Open-Meteo sample data merged by date and 15-minute block.
+- Forecast answers are backtest-style outlooks built from the selected historical dataset, not live future weather feeds.
 - Prefer the deterministic tool results over general reasoning when answering numerical questions.
 - If the user mentions a date, use the analysis scope and tool results for that date when available.
 
