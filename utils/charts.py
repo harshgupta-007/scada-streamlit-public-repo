@@ -1394,16 +1394,17 @@ def plot_forecast_profile(profile_df: pd.DataFrame):
             hovertemplate="Time %{x}<br>Forecast %{y:,.0f} MW<extra></extra>",
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=profile_df["time"],
-            y=profile_df["demand_energy"],
-            mode="lines",
-            name="Actual Demand",
-            line=dict(color="#E76F51", width=2, dash="dot"),
-            hovertemplate="Time %{x}<br>Actual %{y:,.0f} MW<extra></extra>",
+    if "demand_energy" in profile_df.columns and profile_df["demand_energy"].notna().any():
+        fig.add_trace(
+            go.Scatter(
+                x=profile_df["time"],
+                y=profile_df["demand_energy"],
+                mode="lines",
+                name="Actual Demand",
+                line=dict(color="#E76F51", width=2, dash="dot"),
+                hovertemplate="Time %{x}<br>Actual %{y:,.0f} MW<extra></extra>",
+            )
         )
-    )
     fig.update_layout(
         title="Selected-Day 96-Block Forecast vs Actual Demand",
         xaxis_title="Time",
@@ -1433,15 +1434,16 @@ def plot_forecast_daily_context(recent_daily_df: pd.DataFrame, summary: dict):
             line=dict(color="#6B7280", width=2),
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=[forecast_date],
-            y=[summary["actual_peak_mw"]],
-            mode="markers",
-            name="Target-Day Actual Peak",
-            marker=dict(size=11, color="#E76F51", symbol="circle"),
+    if summary.get("actual_peak_mw") == summary.get("actual_peak_mw"):
+        fig.add_trace(
+            go.Scatter(
+                x=[forecast_date],
+                y=[summary["actual_peak_mw"]],
+                mode="markers",
+                name="Target-Day Actual Peak",
+                marker=dict(size=11, color="#E76F51", symbol="circle"),
+            )
         )
-    )
     fig.add_trace(
         go.Scatter(
             x=[forecast_date],

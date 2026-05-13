@@ -39,7 +39,15 @@ from utils.charts import (
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
 from utils.data_loader import get_data_source_label
-from utils.forecasting import build_intraday_forecast, get_forecast_target_dates, summarize_forecast, weather_label
+from utils.forecasting import (
+    build_intraday_forecast,
+    build_live_forecast,
+    fetch_open_meteo_forecast_weather,
+    get_forecast_target_dates,
+    get_open_meteo_settings,
+    summarize_forecast,
+    weather_label,
+)
 from utils.agent_chat import (
     ask_scada_agent_with_trace,
     is_agent_chat_configured,
@@ -544,8 +552,8 @@ def render_weather_correlation():
 def render_forecasting():
     st.header("Forecasting")
     st.markdown(
-        "Backtest a weather-aware 96-block demand forecast using recent history. "
-        "This is the right first production step because we can measure forecast quality on known days before moving to fully forward-looking operations."
+        "Run either a historical backtest or a forward-looking demand outlook powered by Open-Meteo forecast weather. "
+        "Both paths use the same block-wise demand model so the operator view stays consistent."
     )
 
     df = get_merged_scada_weather()
@@ -568,6 +576,13 @@ def render_forecasting():
         st.info("No records remain after the selected filters.")
         return
 
+    forecast_mode = st.radio(
+        "Forecast mode",
+        ["Historical Backtest", "Forward-Looking Open-Meteo"],
+        horizontal=True,
+        key="forecast_mode",
+    )
+
     weather_options = {
         "Apparent Temperature": "apparent_temperature",
         "Temperature": "temperature_2m",
@@ -577,20 +592,7 @@ def render_forecasting():
         "Demand Only Baseline": "__demand_only__",
     }
 
-    available_target_dates = get_forecast_target_dates(df, min_history_days=5)
-    if not available_target_dates:
-        st.warning("At least 6 filtered dates are needed to run the forecasting backtest.")
-        return
-
     control_col1, control_col2, control_col3 = st.columns([1.2, 1, 1])
-    with control_col1:
-        target_date = st.selectbox(
-            "Target date to forecast",
-            options=available_target_dates,
-            format_func=lambda date_value: date_value.strftime("%d %b %Y"),
-            index=len(available_target_dates) - 1,
-            key="forecast_target_date",
-        )
     with control_col2:
         lookback_days = st.slider(
             "Lookback days",
@@ -610,12 +612,67 @@ def render_forecasting():
 
     weather_col = weather_options[selected_weather_label]
     actual_weather_col = None if weather_col == "__demand_only__" else weather_col
-    artifacts = build_intraday_forecast(
-        df,
-        target_date=target_date,
-        weather_col=actual_weather_col or "__no_weather__",
-        lookback_days=lookback_days,
-    )
+
+    forward_mode = forecast_mode == "Forward-Looking Open-Meteo"
+    if forward_mode:
+        try:
+            open_meteo_df = fetch_open_meteo_forecast_weather(forecast_days=3)
+        except Exception as exc:
+            st.warning(f"Open-Meteo forecast could not be loaded right now: {exc}")
+            return
+
+        if open_meteo_df.empty:
+            st.warning("Open-Meteo returned no 15-minute forecast weather data.")
+            return
+
+        settings = get_open_meteo_settings()
+        forecast_dates = sorted(open_meteo_df["date"].dt.date.unique())
+        if not forecast_dates:
+            st.warning("No forecast dates were returned by Open-Meteo.")
+            return
+
+        with control_col1:
+            target_date = st.selectbox(
+                "Forecast target date",
+                options=forecast_dates,
+                format_func=lambda date_value: date_value.strftime("%d %b %Y"),
+                index=min(1, len(forecast_dates) - 1),
+                key="forecast_target_date_live",
+            )
+
+        st.caption(
+            f"Weather source: Open-Meteo `/v1/forecast` 15-minute forecast at "
+            f"{settings['latitude']:.4f}, {settings['longitude']:.4f} with timezone `{settings['timezone']}`."
+        )
+
+        artifacts = build_live_forecast(
+            df,
+            forecast_weather_df=open_meteo_df,
+            target_date=target_date,
+            weather_col=actual_weather_col or "__no_weather__",
+            lookback_days=lookback_days,
+        )
+    else:
+        available_target_dates = get_forecast_target_dates(df, min_history_days=5)
+        if not available_target_dates:
+            st.warning("At least 6 filtered dates are needed to run the forecasting backtest.")
+            return
+
+        with control_col1:
+            target_date = st.selectbox(
+                "Target date to forecast",
+                options=available_target_dates,
+                format_func=lambda date_value: date_value.strftime("%d %b %Y"),
+                index=len(available_target_dates) - 1,
+                key="forecast_target_date",
+            )
+
+        artifacts = build_intraday_forecast(
+            df,
+            target_date=target_date,
+            weather_col=actual_weather_col or "__no_weather__",
+            lookback_days=lookback_days,
+        )
 
     if artifacts is None or artifacts.profile.empty:
         st.warning("Forecast could not be built for the selected date and lookback window.")
@@ -626,10 +683,19 @@ def render_forecasting():
 
     kpi_cols = st.columns(5)
     kpi_cols[0].metric("Forecast Peak", f"{summary['forecast_peak_mw']:,.0f} MW", summary["forecast_peak_time"])
-    kpi_cols[1].metric("Actual Peak", f"{summary['actual_peak_mw']:,.0f} MW", summary["actual_peak_time"])
+    if summary.get("actual_peak_mw") == summary.get("actual_peak_mw"):
+        kpi_cols[1].metric("Actual Peak", f"{summary['actual_peak_mw']:,.0f} MW", summary["actual_peak_time"])
+    else:
+        kpi_cols[1].metric("Peak Window", summary["peak_window_label"])
     kpi_cols[2].metric("Forecast Energy", f"{summary['forecast_energy_gwh']:.2f} GWh")
-    kpi_cols[3].metric("MAE", f"{summary['mae_mw']:,.0f} MW")
-    kpi_cols[4].metric("MAPE", f"{summary['mape'] * 100:.1f}%" if summary["mape"] == summary["mape"] else "NA")
+    if summary.get("mae_mw") == summary.get("mae_mw"):
+        kpi_cols[3].metric("MAE", f"{summary['mae_mw']:,.0f} MW")
+    else:
+        kpi_cols[3].metric("Mode", "Forward")
+    if summary.get("mape") == summary.get("mape"):
+        kpi_cols[4].metric("MAPE", f"{summary['mape'] * 100:.1f}%")
+    else:
+        kpi_cols[4].metric("Risk Level", summary["overall_risk_level"])
 
     st.success(summarize_forecast(summary))
     st.subheader("Risk Classification")
@@ -651,7 +717,7 @@ def render_forecasting():
             )
 
     st.caption(
-        "How to read this: the blue line is the forecast, the orange dotted line is the actual selected day, "
+        "How to read this: the blue line is the forecast, the orange dotted line appears only in backtest mode, "
         "and the shaded band is the model's operating confidence range."
     )
 
@@ -678,6 +744,12 @@ def render_forecasting():
                 st.warning("Could not build the weather contribution chart.")
         else:
             st.info("Demand-only baseline is selected, so no weather adjustment chart is shown.")
+
+    if summary.get("seasonality_warning"):
+        st.warning(
+            "Reliability note: the live forecast target month is outside the historical demand month pattern in the current dataset. "
+            "This forward-looking outlook is still useful for workflow validation, but it is less reliable than a same-season model."
+        )
 
     st.subheader("Operational Notes")
     for risk_flag in summary["risk_flags"]:
@@ -716,10 +788,11 @@ def render_forecasting():
         "forecast_demand",
         "forecast_lower",
         "forecast_upper",
-        "demand_energy",
         "demand_mean",
         "weather_adjustment",
     ]
+    if profile_df["demand_energy"].notna().any():
+        display_columns.insert(5, "demand_energy")
     if actual_weather_col and actual_weather_col in profile_df.columns:
         display_columns.extend([actual_weather_col, "weather_mean", "weather_beta"])
     st.dataframe(profile_df[display_columns], use_container_width=True, hide_index=True)

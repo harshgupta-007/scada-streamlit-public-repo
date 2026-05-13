@@ -62,6 +62,9 @@ Current optional secrets:
 - `LANGSMITH_TRACING`: optional, defaults to `true`
 - `LANGSMITH_ENDPOINT`: optional custom LangSmith endpoint
 - `MONGODB_URI`: enables MongoDB as the primary SCADA and weather source
+- `OPEN_METEO_LATITUDE`: optional forecast location override for forward weather outlooks
+- `OPEN_METEO_LONGITUDE`: optional forecast location override for forward weather outlooks
+- `OPEN_METEO_TIMEZONE`: optional timezone override for Open-Meteo forecast calls
 
 Phase 1 observability traces only the Agent Chat workflow so dashboard browsing remains lightweight.
 Phase 2 adds lightweight user feedback on the latest Agent Chat response, which is submitted back to LangSmith for trace review.

@@ -4,7 +4,12 @@ import re
 import streamlit as st
 import uuid
 from typing import Dict, List, Optional
-from utils.forecasting import build_intraday_forecast, get_forecast_target_dates
+from utils.forecasting import (
+    build_intraday_forecast,
+    build_live_forecast,
+    fetch_open_meteo_forecast_weather,
+    get_forecast_target_dates,
+)
 
 try:
     from langsmith import Client, trace, traceable, tracing_context
@@ -608,6 +613,64 @@ def tool_weather_intraday(df: pd.DataFrame, prompt: str) -> str:
 def tool_forecast_outlook(df: pd.DataFrame, prompt: str) -> str:
     working_df = df.copy()
     working_df["date"] = pd.to_datetime(working_df["date"])
+    prompt_lower = prompt.lower()
+    live_forward_requested = any(word in prompt_lower for word in ["tomorrow", "next day", "live", "forward"])
+    weather_col = _preferred_weather_column(prompt, working_df) or "__no_weather__"
+
+    if live_forward_requested:
+        try:
+            forecast_weather_df = fetch_open_meteo_forecast_weather(forecast_days=3)
+        except Exception as exc:
+            forecast_weather_df = pd.DataFrame()
+            fetch_error = str(exc)
+        else:
+            fetch_error = ""
+
+        if not forecast_weather_df.empty:
+            future_dates = sorted(forecast_weather_df["date"].dt.date.unique())
+            target_date = future_dates[min(1, len(future_dates) - 1)] if future_dates else None
+            if target_date:
+                artifacts = build_live_forecast(
+                    working_df,
+                    forecast_weather_df=forecast_weather_df,
+                    target_date=target_date,
+                    weather_col=weather_col,
+                    lookback_days=7,
+                )
+                if artifacts is not None:
+                    summary = artifacts.summary
+                    lines = [
+                        "Tool: forecast_outlook",
+                        (
+                            f"- Forecast mode: live Open-Meteo forward outlook for {summary['target_date']} "
+                            f"using the previous {summary['lookback_days']} selected historical days."
+                        ),
+                        (
+                            f"- Likely peak window: {summary['peak_window_label']} with predicted peak "
+                            f"{summary['forecast_peak_mw']:,.0f} MW."
+                        ),
+                        (
+                            f"- Forecast daily energy: {summary['forecast_energy_gwh']:.2f} GWh; "
+                            f"average demand: {summary['forecast_avg_mw']:,.0f} MW."
+                        ),
+                        f"- Overall alert level: {summary['overall_risk_level']}.",
+                    ]
+                    for risk_card in summary["risk_cards"]:
+                        lines.append(
+                            f"- {risk_card['title']}: {risk_card['level']} ({risk_card['metric']}). {risk_card['detail']}"
+                        )
+                    if summary.get("seasonality_warning"):
+                        lines.append(
+                            "- Reliability note: the forecast target month is outside the historical demand month pattern in the selected dataset."
+                        )
+                    return "\n".join(lines)
+
+        fallback_line = (
+            f"- Live Open-Meteo forward forecast could not be used, so this falls back to historical backtest. Reason: {fetch_error}"
+            if fetch_error
+            else "- Live Open-Meteo forward forecast was unavailable, so this falls back to historical backtest."
+        )
+
     available_target_dates = get_forecast_target_dates(working_df, min_history_days=5)
     if not available_target_dates:
         return "Tool: forecast_outlook\n- At least 6 dates are required to generate a forecast backtest."
@@ -615,7 +678,6 @@ def tool_forecast_outlook(df: pd.DataFrame, prompt: str) -> str:
     requested_dates = _parse_user_dates(prompt, working_df)
     matched_dates = [date.date() for date in requested_dates if date.date() in set(available_target_dates)]
     target_date = matched_dates[0] if matched_dates else available_target_dates[-1]
-    weather_col = _preferred_weather_column(prompt, working_df) or "__no_weather__"
 
     artifacts = build_intraday_forecast(
         working_df,
@@ -629,6 +691,7 @@ def tool_forecast_outlook(df: pd.DataFrame, prompt: str) -> str:
     summary = artifacts.summary
     lines = [
         "Tool: forecast_outlook",
+        *( [fallback_line] if live_forward_requested else [] ),
         (
             f"- Forecast mode: historical next-day backtest for {summary['target_date']} "
             f"using the previous {summary['lookback_days']} selected days."
