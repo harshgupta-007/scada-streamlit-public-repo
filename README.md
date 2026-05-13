@@ -9,6 +9,7 @@ This repository is being prepared for deployment on Streamlit Cloud with a secur
 This first public release includes:
 
 - Overview dashboard
+- Production Readiness page with data health and forecast monitoring
 - Regional analysis
 - Generation mix analysis
 - Intraday profile analysis
@@ -86,6 +87,7 @@ Detailed deployment notes are available in:
 - `docs/REVIEW_CHECKLIST.md`
 - `docs/LANGSMITH_EVALUATION_WORKFLOW.md`
 - `docs/LANGSMITH_DATASET_UPLOAD.md`
+- `docs/PRODUCTION_GRADE_ROADMAP.md`
 
 ## Security rules for this repo
 

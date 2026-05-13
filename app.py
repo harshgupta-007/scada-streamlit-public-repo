@@ -48,6 +48,13 @@ from utils.forecasting import (
     summarize_forecast,
     weather_label,
 )
+from utils.production_monitoring import (
+    ROADMAP_PHASES,
+    build_monitoring_artifacts,
+    plot_backtest_mape,
+    plot_daily_completeness,
+    plot_peak_prediction_quality,
+)
 from utils.agent_chat import (
     ask_scada_agent_with_trace,
     is_agent_chat_configured,
@@ -62,6 +69,7 @@ BASE_DIR = Path(__file__).resolve().parent
 ASSET_IMAGE = BASE_DIR / "assets" / "scada_architecture.png"
 AVAILABLE_PAGES = [
     "Overview",
+    "Production Readiness",
     "Regional Analysis",
     "Generation Mix",
     "Intraday Profile",
@@ -199,6 +207,8 @@ def main():
 
     if page == "Overview":
         render_overview()
+    elif page == "Production Readiness":
+        render_production_readiness()
     elif page == "Regional Analysis":
         render_regional()
     elif page == "Generation Mix":
@@ -242,6 +252,158 @@ def render_overview():
     if fig_anomaly:
         st.plotly_chart(fig_anomaly, use_container_width=True)
     st.warning(generate_anomaly_insights(df))
+
+
+def render_production_readiness():
+    st.header("Production Readiness")
+    st.markdown(
+        "This page explains what makes the system production-grade and shows the first live control layer: "
+        "**Data Health + Forecast Monitoring**. In simple terms, we are checking whether the input data is trustworthy "
+        "and whether the forecast engine is performing consistently."
+    )
+
+    scada_df = load_scada_data(DATA_FILE)
+    merged_df = get_merged_scada_weather()
+
+    start_date = st.session_state.get("start_date")
+    end_date = st.session_state.get("end_date")
+    if start_date and end_date:
+        scada_df = filter_data_by_date(scada_df, start_date, end_date)
+        if not merged_df.empty:
+            merged_df = filter_data_by_date(merged_df, start_date, end_date)
+
+    if st.session_state.get("exclude_weekends", False):
+        if "is_weekend" in scada_df.columns:
+            scada_df = scada_df[~scada_df["is_weekend"]]
+        if not merged_df.empty and "is_weekend" in merged_df.columns:
+            merged_df = merged_df[~merged_df["is_weekend"]]
+    if st.session_state.get("exclude_holidays", False):
+        if "is_holiday" in scada_df.columns:
+            scada_df = scada_df[~scada_df["is_holiday"]]
+        if not merged_df.empty and "is_holiday" in merged_df.columns:
+            merged_df = merged_df[~merged_df["is_holiday"]]
+    if st.session_state.get("exclude_events", False):
+        if "is_special_event" in scada_df.columns:
+            scada_df = scada_df[~scada_df["is_special_event"]]
+        if not merged_df.empty and "is_special_event" in merged_df.columns:
+            merged_df = merged_df[~merged_df["is_special_event"]]
+
+    roadmap_tab, data_tab, monitoring_tab = st.tabs(
+        ["Roadmap", "Data Health", "Forecast Monitoring"]
+    )
+
+    with roadmap_tab:
+        st.info(
+            "Learning view: a production system is built in layers. We first validate data, then measure model quality, "
+            "then automate and harden operations around those foundations."
+        )
+        for phase in ROADMAP_PHASES:
+            with st.container(border=True):
+                st.markdown(f"**{phase['phase']}: {phase['name']}**")
+                st.write(f"Goal: {phase['goal']}")
+                st.write(f"Outcome: {phase['outcome']}")
+
+        st.subheader("Why we start here")
+        st.write(
+            "If the data is incomplete or the forecast is drifting, every AI explanation later becomes less trustworthy. "
+            "So the most relevant first step is to make the system observable and measurable."
+        )
+
+    with data_tab:
+        monitoring = build_monitoring_artifacts(scada_df, merged_df)
+        health = monitoring.data_health
+        st.success(health["summary"])
+        st.caption(
+            "What this means: these checks answer whether the dashboard is reading complete, non-duplicated, well-merged data. "
+            "If these fail, charts, anomalies, weather analysis, and forecasts can all become misleading."
+        )
+
+        card_cols = st.columns(4)
+        for idx, card in enumerate(health["cards"]):
+            with card_cols[idx]:
+                render_risk_card(card["title"], card["status"], card["value"], card["detail"])
+
+        completeness_fig = plot_daily_completeness(health["daily_completeness"])
+        if completeness_fig:
+            st.plotly_chart(completeness_fig, use_container_width=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Daily Completeness Table")
+            st.dataframe(health["daily_completeness"], use_container_width=True, hide_index=True)
+        with col2:
+            st.subheader("Key Column Missingness")
+            if not health["null_table"].empty:
+                st.dataframe(health["null_table"], use_container_width=True, hide_index=True)
+            else:
+                st.info("No null-rate table is available for the current selection.")
+
+    with monitoring_tab:
+        weather_signal = st.selectbox(
+            "Monitoring weather signal",
+            ["apparent_temperature", "temperature_2m", "relativehumidity_2m", "windspeed_10m", "precipitation"],
+            index=0,
+            key="production_monitoring_weather",
+        )
+        evaluation_days = st.slider(
+            "Recent forecast runs to review",
+            min_value=3,
+            max_value=10,
+            value=7,
+            step=1,
+            key="production_monitoring_days",
+        )
+        lookback_days = st.slider(
+            "Forecast monitoring lookback window",
+            min_value=5,
+            max_value=14,
+            value=7,
+            step=1,
+            key="production_monitoring_lookback",
+        )
+
+        monitoring = build_monitoring_artifacts(
+            scada_df,
+            merged_df,
+            weather_col=weather_signal,
+            lookback_days=lookback_days,
+            evaluation_days=evaluation_days,
+        )
+
+        if not monitoring.backtest_summary:
+            st.warning("Not enough filtered data is available to evaluate recent forecast runs.")
+            return
+
+        summary = monitoring.backtest_summary
+        st.info(
+            "Learning view: forecast monitoring means we rerun the model on recent known days and score it. "
+            "That tells us whether the model is staying reliable or silently drifting."
+        )
+
+        kpi_cols = st.columns(5)
+        kpi_cols[0].metric("Runs Reviewed", f"{summary['runs']}")
+        kpi_cols[1].metric("Avg MAPE", f"{summary['avg_mape']:.2f}%")
+        kpi_cols[2].metric("Avg MAE", f"{summary['avg_mae']:.0f} MW")
+        kpi_cols[3].metric("Avg Peak Error", f"{summary['avg_peak_error']:.0f} MW")
+        kpi_cols[4].metric("Peak Time Hit Rate", f"{summary['peak_time_hit_rate']:.1f}%")
+
+        render_risk_card(
+            "Forecast Monitoring Status",
+            summary["status"],
+            f"{summary['avg_mape']:.2f}% MAPE",
+            "Lower forecast error means the model is stable. Rising error is an early warning that the production setup needs attention.",
+        )
+
+        fig_mape = plot_backtest_mape(monitoring.backtest_table)
+        if fig_mape:
+            st.plotly_chart(fig_mape, use_container_width=True)
+
+        fig_peak = plot_peak_prediction_quality(monitoring.backtest_table)
+        if fig_peak:
+            st.plotly_chart(fig_peak, use_container_width=True)
+
+        st.subheader("Recent Forecast Evaluation Table")
+        st.dataframe(monitoring.backtest_table, use_container_width=True, hide_index=True)
 
 
 def render_regional():
