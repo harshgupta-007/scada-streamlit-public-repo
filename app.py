@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from utils.charts import (
@@ -54,6 +55,15 @@ from utils.production_monitoring import (
     plot_backtest_mape,
     plot_daily_completeness,
     plot_peak_prediction_quality,
+)
+from utils.forecast_registry import (
+    build_forecast_run_record,
+    get_forecast_run_logging_mode,
+    get_recent_session_forecast_runs,
+    is_forecast_run_logging_enabled,
+    load_recent_persisted_forecast_runs,
+    persist_forecast_run_record,
+    remember_forecast_run,
 )
 from utils.agent_chat import (
     ask_scada_agent_with_trace,
@@ -288,8 +298,8 @@ def render_production_readiness():
         if not merged_df.empty and "is_special_event" in merged_df.columns:
             merged_df = merged_df[~merged_df["is_special_event"]]
 
-    roadmap_tab, data_tab, monitoring_tab = st.tabs(
-        ["Roadmap", "Data Health", "Forecast Monitoring"]
+    roadmap_tab, data_tab, monitoring_tab, registry_tab = st.tabs(
+        ["Roadmap", "Data Health", "Forecast Monitoring", "Forecast Registry"]
     )
 
     with roadmap_tab:
@@ -404,6 +414,54 @@ def render_production_readiness():
 
         st.subheader("Recent Forecast Evaluation Table")
         st.dataframe(monitoring.backtest_table, use_container_width=True, hide_index=True)
+
+    with registry_tab:
+        st.info(
+            "Learning view: a forecast registry is an audit trail. It tells us which forecast was run, with which settings, "
+            "on which data window, and whether it was persisted or only kept in the session."
+        )
+        st.caption(f"Logging mode: {get_forecast_run_logging_mode()}")
+        if is_forecast_run_logging_enabled():
+            st.caption("Persistence is enabled, so new forecast runs can be written to MongoDB for traceability.")
+        else:
+            st.caption(
+                "Persistence is disabled by default for safety. The app still keeps recent forecast run records in the current session for review."
+            )
+
+        session_runs = get_recent_session_forecast_runs()
+        st.subheader("Recent Session Forecast Runs")
+        if not session_runs.empty:
+            display_cols = [
+                "created_at_utc",
+                "mode",
+                "target_date",
+                "weather_signal",
+                "forecast_peak_mw",
+                "peak_window_label",
+                "overall_risk_level",
+                "logging_mode",
+            ]
+            available_cols = [col for col in display_cols if col in session_runs.columns]
+            st.dataframe(session_runs[available_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("No forecast runs have been executed in this session yet.")
+
+        persisted_runs = load_recent_persisted_forecast_runs(limit=15)
+        st.subheader("Recent Persisted Forecast Runs")
+        if not persisted_runs.empty:
+            display_cols = [
+                "created_at_utc",
+                "mode",
+                "target_date",
+                "weather_signal",
+                "forecast_peak_mw",
+                "peak_window_label",
+                "overall_risk_level",
+            ]
+            available_cols = [col for col in display_cols if col in persisted_runs.columns]
+            st.dataframe(persisted_runs[available_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("No persisted forecast runs are available, or persistence is currently disabled.")
 
 
 def render_regional():
@@ -776,45 +834,49 @@ def render_forecasting():
     actual_weather_col = None if weather_col == "__demand_only__" else weather_col
 
     forward_mode = forecast_mode == "Forward-Looking Open-Meteo"
+    fallback_reason = None
     if forward_mode:
         try:
             open_meteo_df = fetch_open_meteo_forecast_weather(forecast_days=3)
         except Exception as exc:
             st.warning(f"Open-Meteo forecast could not be loaded right now: {exc}")
-            return
+            fallback_reason = str(exc)
+            open_meteo_df = pd.DataFrame()
 
         if open_meteo_df.empty:
-            st.warning("Open-Meteo returned no 15-minute forecast weather data.")
-            return
+            st.info("Switching to historical backtest because live Open-Meteo weather is unavailable right now.")
+            forward_mode = False
 
-        settings = get_open_meteo_settings()
-        forecast_dates = sorted(open_meteo_df["date"].dt.date.unique())
-        if not forecast_dates:
-            st.warning("No forecast dates were returned by Open-Meteo.")
-            return
+        if forward_mode:
+            settings = get_open_meteo_settings()
+            forecast_dates = sorted(open_meteo_df["date"].dt.date.unique())
+            if not forecast_dates:
+                st.warning("No forecast dates were returned by Open-Meteo.")
+                return
 
-        with control_col1:
-            target_date = st.selectbox(
-                "Forecast target date",
-                options=forecast_dates,
-                format_func=lambda date_value: date_value.strftime("%d %b %Y"),
-                index=min(1, len(forecast_dates) - 1),
-                key="forecast_target_date_live",
+            with control_col1:
+                target_date = st.selectbox(
+                    "Forecast target date",
+                    options=forecast_dates,
+                    format_func=lambda date_value: date_value.strftime("%d %b %Y"),
+                    index=min(1, len(forecast_dates) - 1),
+                    key="forecast_target_date_live",
+                )
+
+            st.caption(
+                f"Weather source: Open-Meteo `/v1/forecast` 15-minute forecast at "
+                f"{settings['latitude']:.4f}, {settings['longitude']:.4f} with timezone `{settings['timezone']}`."
             )
 
-        st.caption(
-            f"Weather source: Open-Meteo `/v1/forecast` 15-minute forecast at "
-            f"{settings['latitude']:.4f}, {settings['longitude']:.4f} with timezone `{settings['timezone']}`."
-        )
+            artifacts = build_live_forecast(
+                df,
+                forecast_weather_df=open_meteo_df,
+                target_date=target_date,
+                weather_col=actual_weather_col or "__no_weather__",
+                lookback_days=lookback_days,
+            )
 
-        artifacts = build_live_forecast(
-            df,
-            forecast_weather_df=open_meteo_df,
-            target_date=target_date,
-            weather_col=actual_weather_col or "__no_weather__",
-            lookback_days=lookback_days,
-        )
-    else:
+    if not forward_mode:
         available_target_dates = get_forecast_target_dates(df, min_history_days=5)
         if not available_target_dates:
             st.warning("At least 6 filtered dates are needed to run the forecasting backtest.")
@@ -842,6 +904,35 @@ def render_forecasting():
 
     summary = artifacts.summary
     profile_df = artifacts.profile
+    filters = {
+        "start_date": st.session_state.get("start_date", ""),
+        "end_date": st.session_state.get("end_date", ""),
+        "exclude_weekends": st.session_state.get("exclude_weekends", False),
+        "exclude_holidays": st.session_state.get("exclude_holidays", False),
+        "exclude_events": st.session_state.get("exclude_events", False),
+    }
+    run_signature = (
+        f"{summary.get('mode')}|{summary.get('target_date')}|{summary.get('lookback_days')}|"
+        f"{selected_weather_label}|{filters['start_date']}|{filters['end_date']}|"
+        f"{filters['exclude_weekends']}|{filters['exclude_holidays']}|{filters['exclude_events']}"
+    )
+    if st.session_state.get("last_forecast_run_signature") != run_signature:
+        run_record = build_forecast_run_record(
+            summary,
+            weather_signal_label=selected_weather_label,
+            filters=filters,
+            fallback_reason=fallback_reason,
+        )
+        remember_forecast_run(run_record)
+        persisted, status_message = persist_forecast_run_record(run_record)
+        st.session_state["last_forecast_run_signature"] = run_signature
+        st.session_state["last_forecast_run_record"] = run_record
+        st.session_state["last_forecast_run_status"] = status_message
+        st.session_state["last_forecast_run_persisted"] = persisted
+    else:
+        run_record = st.session_state.get("last_forecast_run_record", {})
+        status_message = st.session_state.get("last_forecast_run_status", "")
+        persisted = st.session_state.get("last_forecast_run_persisted", False)
 
     kpi_cols = st.columns(5)
     kpi_cols[0].metric("Forecast Peak", f"{summary['forecast_peak_mw']:,.0f} MW", summary["forecast_peak_time"])
@@ -860,6 +951,21 @@ def render_forecasting():
         kpi_cols[4].metric("Risk Level", summary["overall_risk_level"])
 
     st.success(summarize_forecast(summary))
+    st.subheader("Forecast Governance")
+    if persisted:
+        st.success(status_message)
+    else:
+        st.info(status_message or "Forecast run record captured in the current session.")
+    st.caption(
+        "What is being logged: model version, mode, target date, weather signal, filters, forecast peak, peak window, "
+        "risk level, error metrics when available, and any fallback reason."
+    )
+    if run_record:
+        st.caption(
+            f"Run ID: `{run_record.get('run_id', '')}` | Model version: `{run_record.get('model_version', '')}` | "
+            f"Logging mode: {run_record.get('logging_mode', '')}"
+        )
+
     st.subheader("Risk Classification")
     alert_cols = st.columns(4)
     with alert_cols[0]:

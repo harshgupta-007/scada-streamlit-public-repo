@@ -66,6 +66,7 @@ Current optional secrets:
 - `OPEN_METEO_LATITUDE`: optional forecast location override for forward weather outlooks
 - `OPEN_METEO_LONGITUDE`: optional forecast location override for forward weather outlooks
 - `OPEN_METEO_TIMEZONE`: optional timezone override for Open-Meteo forecast calls
+- `ENABLE_FORECAST_RUN_LOGGING`: optional, enables forecast run persistence to MongoDB
 
 Phase 1 observability traces only the Agent Chat workflow so dashboard browsing remains lightweight.
 Phase 2 adds lightweight user feedback on the latest Agent Chat response, which is submitted back to LangSmith for trace review.
@@ -88,6 +89,7 @@ Detailed deployment notes are available in:
 - `docs/LANGSMITH_EVALUATION_WORKFLOW.md`
 - `docs/LANGSMITH_DATASET_UPLOAD.md`
 - `docs/PRODUCTION_GRADE_ROADMAP.md`
+- `docs/FORECAST_RUN_GOVERNANCE.md`
 
 ## Security rules for this repo
 
