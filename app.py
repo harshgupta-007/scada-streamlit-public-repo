@@ -60,10 +60,14 @@ from utils.operator_briefing import build_briefing_dataframe, build_operator_bri
 from utils.forecast_registry import (
     build_forecast_run_record,
     get_forecast_run_logging_mode,
+    get_recent_session_briefing_snapshots,
     get_recent_session_forecast_runs,
     is_forecast_run_logging_enabled,
+    load_recent_persisted_briefing_snapshots,
     load_recent_persisted_forecast_runs,
+    persist_briefing_snapshot,
     persist_forecast_run_record,
+    remember_briefing_snapshot,
     remember_forecast_run,
 )
 from utils.agent_chat import (
@@ -299,8 +303,8 @@ def render_production_readiness():
         if not merged_df.empty and "is_special_event" in merged_df.columns:
             merged_df = merged_df[~merged_df["is_special_event"]]
 
-    roadmap_tab, data_tab, monitoring_tab, registry_tab, briefing_tab = st.tabs(
-        ["Roadmap", "Data Health", "Forecast Monitoring", "Forecast Registry", "Operator Briefing"]
+    roadmap_tab, data_tab, monitoring_tab, registry_tab, briefing_tab, schedule_tab = st.tabs(
+        ["Roadmap", "Data Health", "Forecast Monitoring", "Forecast Registry", "Operator Briefing", "Scheduling"]
     )
 
     with roadmap_tab:
@@ -486,6 +490,59 @@ def render_production_readiness():
             st.caption(
                 "This summary is deterministic and built from the same forecast, risk, and reliability fields already shown elsewhere in the system."
             )
+
+        session_briefings = get_recent_session_briefing_snapshots()
+        st.subheader("Briefing Snapshot History")
+        if not session_briefings.empty:
+            display_cols = [
+                "created_at_utc",
+                "target_date",
+                "mode",
+                "operator_headline",
+                "overall_risk_level",
+                "logging_mode",
+            ]
+            available_cols = [col for col in display_cols if col in session_briefings.columns]
+            st.dataframe(session_briefings[available_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("No briefing snapshots are available in this session yet.")
+
+        persisted_briefings = load_recent_persisted_briefing_snapshots(limit=15)
+        if not persisted_briefings.empty:
+            st.subheader("Persisted Briefing History")
+            display_cols = [
+                "created_at_utc",
+                "target_date",
+                "mode",
+                "operator_headline",
+                "overall_risk_level",
+            ]
+            available_cols = [col for col in display_cols if col in persisted_briefings.columns]
+            st.dataframe(persisted_briefings[available_cols], use_container_width=True, hide_index=True)
+
+    with schedule_tab:
+        st.info(
+            "Learning view: Streamlit is the presentation layer, not the scheduler. In production, a small external job should generate the daily snapshot and save the briefing history."
+        )
+        st.markdown(
+            """
+            **Recommended scheduled command**
+
+            ```powershell
+            python scripts/run_daily_forecast_snapshot.py --weather-signal "Apparent Temperature" --lookback-days 7 --prefer-forward --persist
+            ```
+
+            **What this job does**
+
+            - generates the daily forecast snapshot
+            - builds the operator briefing
+            - writes the forecast run record when logging is enabled
+            - writes a saved daily briefing snapshot when logging is enabled
+            """
+        )
+        st.caption(
+            "Typical production setup: run this from Windows Task Scheduler, cron, Airflow, or another job runner once per day before the operations shift."
+        )
 
 
 def render_regional():
@@ -950,15 +1007,21 @@ def render_forecasting():
             fallback_reason=fallback_reason,
         )
         remember_forecast_run(run_record)
+        remember_briefing_snapshot(run_record)
         persisted, status_message = persist_forecast_run_record(run_record)
+        snapshot_persisted, snapshot_status = persist_briefing_snapshot(run_record)
         st.session_state["last_forecast_run_signature"] = run_signature
         st.session_state["last_forecast_run_record"] = run_record
         st.session_state["last_forecast_run_status"] = status_message
         st.session_state["last_forecast_run_persisted"] = persisted
+        st.session_state["last_briefing_snapshot_status"] = snapshot_status
+        st.session_state["last_briefing_snapshot_persisted"] = snapshot_persisted
     else:
         run_record = st.session_state.get("last_forecast_run_record", {})
         status_message = st.session_state.get("last_forecast_run_status", "")
         persisted = st.session_state.get("last_forecast_run_persisted", False)
+        snapshot_status = st.session_state.get("last_briefing_snapshot_status", "")
+        snapshot_persisted = st.session_state.get("last_briefing_snapshot_persisted", False)
 
     kpi_cols = st.columns(5)
     kpi_cols[0].metric("Forecast Peak", f"{summary['forecast_peak_mw']:,.0f} MW", summary["forecast_peak_time"])
@@ -991,6 +1054,10 @@ def render_forecasting():
             f"Run ID: `{run_record.get('run_id', '')}` | Model version: `{run_record.get('model_version', '')}` | "
             f"Logging mode: {run_record.get('logging_mode', '')}"
         )
+    if snapshot_persisted:
+        st.caption(snapshot_status)
+    elif snapshot_status:
+        st.caption(snapshot_status)
 
     st.subheader("Operator Briefing")
     st.success(operator_briefing["headline"])

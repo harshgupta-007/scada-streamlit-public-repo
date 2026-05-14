@@ -91,6 +91,7 @@ Detailed deployment notes are available in:
 - `docs/PRODUCTION_GRADE_ROADMAP.md`
 - `docs/FORECAST_RUN_GOVERNANCE.md`
 - `docs/OPERATOR_BRIEFING_GUIDE.md`
+- `docs/DAILY_SNAPSHOT_AUTOMATION.md`
 
 ## Security rules for this repo
 

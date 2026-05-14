@@ -11,6 +11,7 @@ from utils.data_loader import MONGODB_DB_NAME, get_data_source_label, get_mongo_
 
 
 FORECAST_RUN_COLLECTION_NAME = "Forecast_run_logs"
+FORECAST_BRIEFING_COLLECTION_NAME = "Forecast_briefing_history"
 FORECAST_MODEL_VERSION = "v1.1-weather-block-baseline"
 
 
@@ -108,11 +109,27 @@ def remember_forecast_run(record: dict):
     st.session_state["forecast_recent_runs"] = recent_runs[:25]
 
 
+def remember_briefing_snapshot(record: dict):
+    recent_briefings = st.session_state.get("forecast_briefing_history", [])
+    recent_briefings = [record] + recent_briefings
+    st.session_state["forecast_briefing_history"] = recent_briefings[:40]
+
+
 def get_recent_session_forecast_runs() -> pd.DataFrame:
     recent_runs = st.session_state.get("forecast_recent_runs", [])
     if not recent_runs:
         return pd.DataFrame()
     df = pd.DataFrame(recent_runs)
+    if "created_at_utc" in df.columns:
+        df["created_at_utc"] = pd.to_datetime(df["created_at_utc"])
+    return df
+
+
+def get_recent_session_briefing_snapshots() -> pd.DataFrame:
+    recent_briefings = st.session_state.get("forecast_briefing_history", [])
+    if not recent_briefings:
+        return pd.DataFrame()
+    df = pd.DataFrame(recent_briefings)
     if "created_at_utc" in df.columns:
         df["created_at_utc"] = pd.to_datetime(df["created_at_utc"])
     return df
@@ -128,6 +145,50 @@ def load_recent_persisted_forecast_runs(limit: int = 20) -> pd.DataFrame:
 
     try:
         collection = client[MONGODB_DB_NAME][FORECAST_RUN_COLLECTION_NAME]
+        records = list(
+            collection.find({}, {"_id": 0})
+            .sort("created_at_utc", -1)
+            .limit(limit)
+        )
+        if not records:
+            return pd.DataFrame()
+        df = pd.DataFrame(records)
+        if "created_at_utc" in df.columns:
+            df["created_at_utc"] = pd.to_datetime(df["created_at_utc"])
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def persist_briefing_snapshot(record: dict) -> tuple[bool, str]:
+    if not is_forecast_run_logging_enabled():
+        return False, "Briefing history persistence is currently in safe read-only mode."
+
+    client = get_mongo_client()
+    if client is None:
+        return False, "MongoDB client is unavailable for briefing history persistence."
+
+    snapshot_record = record.copy()
+    snapshot_record["snapshot_type"] = "daily_operator_briefing"
+
+    try:
+        collection = client[MONGODB_DB_NAME][FORECAST_BRIEFING_COLLECTION_NAME]
+        collection.insert_one(snapshot_record)
+        return True, "Daily briefing snapshot stored in MongoDB."
+    except Exception as exc:
+        return False, f"Daily briefing snapshot could not be stored: {exc}"
+
+
+def load_recent_persisted_briefing_snapshots(limit: int = 20) -> pd.DataFrame:
+    if not is_forecast_run_logging_enabled():
+        return pd.DataFrame()
+
+    client = get_mongo_client()
+    if client is None:
+        return pd.DataFrame()
+
+    try:
+        collection = client[MONGODB_DB_NAME][FORECAST_BRIEFING_COLLECTION_NAME]
         records = list(
             collection.find({}, {"_id": 0})
             .sort("created_at_utc", -1)
