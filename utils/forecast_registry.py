@@ -34,6 +34,7 @@ def build_forecast_run_record(
     summary: dict,
     weather_signal_label: str,
     filters: dict,
+    operator_briefing: Optional[dict] = None,
     fallback_reason: Optional[str] = None,
 ) -> dict:
     created_at = datetime.now(timezone.utc).isoformat()
@@ -77,6 +78,9 @@ def build_forecast_run_record(
             "exclude_events": bool(filters.get("exclude_events", False)),
         },
         "logging_mode": get_forecast_run_logging_mode(),
+        "operator_briefing": operator_briefing or {},
+        "operator_headline": (operator_briefing or {}).get("headline"),
+        "operator_briefing_text": (operator_briefing or {}).get("briefing_text"),
         "fallback_reason": fallback_reason,
     }
     return record

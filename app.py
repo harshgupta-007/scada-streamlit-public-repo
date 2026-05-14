@@ -56,6 +56,7 @@ from utils.production_monitoring import (
     plot_daily_completeness,
     plot_peak_prediction_quality,
 )
+from utils.operator_briefing import build_briefing_dataframe, build_operator_briefing
 from utils.forecast_registry import (
     build_forecast_run_record,
     get_forecast_run_logging_mode,
@@ -298,8 +299,8 @@ def render_production_readiness():
         if not merged_df.empty and "is_special_event" in merged_df.columns:
             merged_df = merged_df[~merged_df["is_special_event"]]
 
-    roadmap_tab, data_tab, monitoring_tab, registry_tab = st.tabs(
-        ["Roadmap", "Data Health", "Forecast Monitoring", "Forecast Registry"]
+    roadmap_tab, data_tab, monitoring_tab, registry_tab, briefing_tab = st.tabs(
+        ["Roadmap", "Data Health", "Forecast Monitoring", "Forecast Registry", "Operator Briefing"]
     )
 
     with roadmap_tab:
@@ -462,6 +463,29 @@ def render_production_readiness():
             st.dataframe(persisted_runs[available_cols], use_container_width=True, hide_index=True)
         else:
             st.info("No persisted forecast runs are available, or persistence is currently disabled.")
+
+    with briefing_tab:
+        st.info(
+            "Learning view: an operator briefing converts forecast metrics into a short shift-style summary. "
+            "The goal is to help a human quickly understand expected demand shape, risk level, and reliability caveats."
+        )
+        session_runs = get_recent_session_forecast_runs()
+        if session_runs.empty:
+            st.info("Run a forecast first to generate an operator briefing.")
+        else:
+            latest_run = session_runs.iloc[0].to_dict()
+            if latest_run.get("operator_headline"):
+                st.success(latest_run["operator_headline"])
+            if latest_run.get("operator_briefing_text"):
+                st.write(latest_run["operator_briefing_text"])
+            briefing_payload = latest_run.get("operator_briefing", {})
+            if isinstance(briefing_payload, dict):
+                briefing_df = build_briefing_dataframe(briefing_payload)
+                if not briefing_df.empty:
+                    st.dataframe(briefing_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "This summary is deterministic and built from the same forecast, risk, and reliability fields already shown elsewhere in the system."
+            )
 
 
 def render_regional():
@@ -904,6 +928,7 @@ def render_forecasting():
 
     summary = artifacts.summary
     profile_df = artifacts.profile
+    operator_briefing = build_operator_briefing(summary, selected_weather_label)
     filters = {
         "start_date": st.session_state.get("start_date", ""),
         "end_date": st.session_state.get("end_date", ""),
@@ -921,6 +946,7 @@ def render_forecasting():
             summary,
             weather_signal_label=selected_weather_label,
             filters=filters,
+            operator_briefing=operator_briefing,
             fallback_reason=fallback_reason,
         )
         remember_forecast_run(run_record)
@@ -965,6 +991,17 @@ def render_forecasting():
             f"Run ID: `{run_record.get('run_id', '')}` | Model version: `{run_record.get('model_version', '')}` | "
             f"Logging mode: {run_record.get('logging_mode', '')}"
         )
+
+    st.subheader("Operator Briefing")
+    st.success(operator_briefing["headline"])
+    st.write(operator_briefing["briefing_text"])
+    st.caption(
+        "How to read this: this is the short handover-style summary an operator or shift lead would want first. "
+        "It compresses the forecast, risk cards, and reliability notes into a compact operational message."
+    )
+    briefing_df = build_briefing_dataframe(operator_briefing)
+    if not briefing_df.empty:
+        st.dataframe(briefing_df, use_container_width=True, hide_index=True)
 
     st.subheader("Risk Classification")
     alert_cols = st.columns(4)
