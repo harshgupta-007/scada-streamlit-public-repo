@@ -20,6 +20,14 @@ Open:
 
 This tab is the model-governance layer for forecasting.
 
+The dashboard now also shows a visible walkthrough of:
+
+- which variants are tested
+- how target days are selected
+- what lookback window is used
+- how scoring is calculated
+- how drift status is assigned
+
 ## Forecast variants currently compared
 
 The dashboard currently evaluates three forecast variants on the same recent historical days:
@@ -192,6 +200,19 @@ Current limits:
 - no automated champion/challenger rollout exists yet
 
 These are good constraints for the current stage because the system remains interpretable and easy to audit.
+
+## Performance note
+
+If the page feels slow, the main cost is usually not raw data loading. When `MONGODB_URI` is configured, the app already reads SCADA and weather data from MongoDB as the primary source.
+
+The heavier work is:
+
+- running multiple backtests
+- for multiple variants
+- across multiple recent target days
+- and recalculating comparison metrics
+
+To reduce repeated delay, the version-comparison and forecast-monitoring calculations are now cached for short repeated reloads. This means MongoDB remains the correct serving source, while caching handles most of the repeated analytical latency.
 
 ## Recommended next step after this feature
 

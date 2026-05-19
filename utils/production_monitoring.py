@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 
 from utils.forecasting import build_intraday_forecast, weather_label
 
@@ -192,6 +193,7 @@ def build_data_health_report(scada_df: pd.DataFrame, merged_df: pd.DataFrame) ->
     }
 
 
+@st.cache_data(ttl=900, show_spinner=False)
 def build_backtest_monitoring(
     df: pd.DataFrame,
     weather_col: str = "apparent_temperature",
@@ -261,6 +263,7 @@ def build_backtest_monitoring(
     return results_df, summary
 
 
+@st.cache_data(ttl=900, show_spinner=False)
 def build_forecast_version_comparison(
     df: pd.DataFrame,
     lookback_days: int = 7,

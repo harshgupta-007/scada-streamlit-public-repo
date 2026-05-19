@@ -443,6 +443,10 @@ def render_production_readiness():
             "Why this matters: in production, a model is not trustworthy just because it exists. "
             "We need to know which version performs best and whether its quality is changing over time."
         )
+        st.caption(
+            "Performance note: this analysis now uses cached results for repeated reloads. "
+            "Since your app is already reading from MongoDB when configured, the main delay was forecast recomputation rather than file storage."
+        )
 
         comparison_days = st.slider(
             "Comparison days to evaluate",
@@ -471,6 +475,67 @@ def render_production_readiness():
             st.warning("Not enough filtered data is available to compare forecast variants right now.")
         else:
             st.success(comparison.narrative)
+
+            unique_test_days = comparison.comparison_table["Date"].dt.date.nunique()
+            earliest_test_day = comparison.comparison_table["Date"].min().date()
+            latest_test_day = comparison.comparison_table["Date"].max().date()
+            meta_cols = st.columns(4)
+            meta_cols[0].metric("Variants Tested", f"{comparison.comparison_table['Variant'].nunique()}")
+            meta_cols[1].metric("Target Days Tested", f"{unique_test_days}")
+            meta_cols[2].metric("Test Window", f"{earliest_test_day} to {latest_test_day}")
+            meta_cols[3].metric("Lookback Used", f"{comparison_lookback} days")
+
+            with st.expander("How this comparison is built", expanded=True):
+                st.markdown(
+                    f"""
+                    **Step 1. Variant set**
+
+                    The app currently compares a fixed forecast set:
+                    - `Demand Only Baseline`
+                    - `Weather-Aware Apparent Temperature`
+                    - `Weather-Aware Temperature`
+
+                    **Step 2. Target days**
+
+                    Using the current sidebar filters, the app takes the most recent `{comparison_days}` eligible historical days.
+                    In this run, that became `{unique_test_days}` target days from `{earliest_test_day}` to `{latest_test_day}`.
+
+                    **Step 3. Lookback history**
+
+                    For each target day, each variant uses the previous `{comparison_lookback}` eligible days as history.
+                    That means every variant is tested on the same target days with the same history length, which keeps the comparison fair.
+
+                    **Step 4. Forecast math**
+
+                    For each 15-minute block:
+                    - demand baseline = average historical demand at that same block
+                    - if weather is enabled: weather adjustment = `beta * (target weather - historical weather mean)`
+                    - final forecast = demand baseline + weather adjustment
+
+                    **Step 5. Scoring**
+
+                    For every target day and variant, the app computes:
+                    - `MAPE`
+                    - `MAE`
+                    - peak error
+                    - energy error
+                    - peak-time hit rate
+
+                    **Step 6. Drift logic**
+
+                    The tested days for each variant are split into:
+                    - early window
+                    - recent window
+
+                    Then drift is measured as:
+                    - `MAPE shift = recent-window MAPE - early-window MAPE`
+
+                    Interpretation:
+                    - positive shift = worsening
+                    - negative shift = improving
+                    - near zero = stable
+                    """
+                )
 
             with st.expander("Forecast variants used in this comparison", expanded=False):
                 variant_rows = pd.DataFrame(
