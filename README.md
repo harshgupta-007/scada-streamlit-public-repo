@@ -85,6 +85,7 @@ Detailed deployment notes are available in:
 
 - `docs/STREAMLIT_CLOUD_DEPLOYMENT.md`
 - `docs/DEPLOYMENT_WALKTHROUGH.md`
+- `docs/DASHBOARD_AND_MODULE_WALKTHROUGH.md`
 - `docs/REVIEW_CHECKLIST.md`
 - `docs/LANGSMITH_EVALUATION_WORKFLOW.md`
 - `docs/LANGSMITH_DATASET_UPLOAD.md`
@@ -116,3 +117,11 @@ When `MONGODB_URI` is configured, the app reads:
 - weather collection: `Weather_data`
 
 If MongoDB is not configured or cannot be reached, the app falls back to the local sample files above.
+
+## Documentation maintenance
+
+Whenever a major page, workflow, or production feature is added, update:
+
+- `docs/DASHBOARD_AND_MODULE_WALKTHROUGH.md`
+- the relevant feature-specific guide in `docs/`
+- `docs/PRODUCTION_GRADE_ROADMAP.md` if the production architecture changes
