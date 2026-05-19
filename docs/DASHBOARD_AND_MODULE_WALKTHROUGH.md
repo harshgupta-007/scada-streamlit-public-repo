@@ -158,6 +158,18 @@ Why it matters:
 
 This tells us whether the forecast model is stable or drifting.
 
+### Version Comparison
+
+Explains and measures:
+
+- which forecast variant performs best on the same recent days
+- how demand-only and weather-aware variants compare
+- whether recent error is stable, improving, or worsening
+
+Why it matters:
+
+This is the simplest production-safe way to answer whether the current forecast version should still be trusted.
+
 ### Forecast Registry
 
 Shows forecast run traceability:
@@ -419,6 +431,8 @@ Purpose:
 
 - compute data health metrics
 - compute forecast monitoring metrics
+- compare forecast variants
+- detect basic forecast drift
 
 Key responsibility:
 

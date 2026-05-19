@@ -107,10 +107,20 @@ Make every forecast explainable, versioned, and traceable.
 ### Planned work
 
 - add model version metadata
+- compare forecast variants on the same recent evaluation days
+- detect drift by comparing earlier-window vs recent-window error
 - log selected weather variable and lookback window
 - log forward-vs-backtest mode
 - track fallback reasons
 - extend observability beyond Agent Chat into forecast execution
+
+### What is now implemented in this phase
+
+- forecast run metadata and governance
+- operator briefing generation
+- execution monitoring for scheduled runs
+- forecast version comparison
+- forecast drift analysis
 
 ### Why it matters
 
@@ -202,6 +212,15 @@ Use this to understand:
 - whether forecast quality is stable
 - which metrics actually matter operationally
 - how to detect model drift early
+
+### Production Readiness > Version Comparison
+
+Use this to understand:
+
+- which forecast variant is currently strongest
+- whether the recent winner is stable
+- whether a demand-only or weather-aware setup is performing better
+- whether forecast quality is worsening in the recent window
 
 ## Recommended next implementation after Phase 1
 

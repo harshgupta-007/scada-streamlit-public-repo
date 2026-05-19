@@ -50,11 +50,16 @@ from utils.forecasting import (
     weather_label,
 )
 from utils.production_monitoring import (
+    FORECAST_VARIANTS,
     ROADMAP_PHASES,
+    build_forecast_version_comparison,
     build_monitoring_artifacts,
     plot_backtest_mape,
     plot_daily_completeness,
     plot_peak_prediction_quality,
+    plot_variant_drift,
+    plot_variant_mape_comparison,
+    plot_variant_summary_bar,
 )
 from utils.operator_briefing import build_briefing_dataframe, build_operator_briefing
 from utils.execution_monitoring import build_execution_health_summary, load_recent_execution_events
@@ -304,8 +309,16 @@ def render_production_readiness():
         if not merged_df.empty and "is_special_event" in merged_df.columns:
             merged_df = merged_df[~merged_df["is_special_event"]]
 
-    roadmap_tab, data_tab, monitoring_tab, registry_tab, briefing_tab, schedule_tab = st.tabs(
-        ["Roadmap", "Data Health", "Forecast Monitoring", "Forecast Registry", "Operator Briefing", "Scheduling"]
+    roadmap_tab, data_tab, monitoring_tab, comparison_tab, registry_tab, briefing_tab, schedule_tab = st.tabs(
+        [
+            "Roadmap",
+            "Data Health",
+            "Forecast Monitoring",
+            "Version Comparison",
+            "Forecast Registry",
+            "Operator Briefing",
+            "Scheduling",
+        ]
     )
 
     with roadmap_tab:
@@ -420,6 +433,119 @@ def render_production_readiness():
 
         st.subheader("Recent Forecast Evaluation Table")
         st.dataframe(monitoring.backtest_table, use_container_width=True, hide_index=True)
+
+    with comparison_tab:
+        st.info(
+            "Learning view: version comparison means we test multiple forecast variants on the same recent days. "
+            "Drift analysis then checks whether recent error is getting better, staying stable, or worsening."
+        )
+        st.caption(
+            "Why this matters: in production, a model is not trustworthy just because it exists. "
+            "We need to know which version performs best and whether its quality is changing over time."
+        )
+
+        comparison_days = st.slider(
+            "Comparison days to evaluate",
+            min_value=4,
+            max_value=14,
+            value=7,
+            step=1,
+            key="production_comparison_days",
+        )
+        comparison_lookback = st.slider(
+            "Comparison lookback window",
+            min_value=5,
+            max_value=14,
+            value=7,
+            step=1,
+            key="production_comparison_lookback",
+        )
+
+        comparison = build_forecast_version_comparison(
+            merged_df if not merged_df.empty else scada_df,
+            lookback_days=comparison_lookback,
+            evaluation_days=comparison_days,
+        )
+
+        if comparison.comparison_table.empty:
+            st.warning("Not enough filtered data is available to compare forecast variants right now.")
+        else:
+            st.success(comparison.narrative)
+
+            with st.expander("Forecast variants used in this comparison", expanded=False):
+                variant_rows = pd.DataFrame(
+                    [
+                        {
+                            "Variant": variant["variant_name"],
+                            "Weather Signal": (
+                                weather_label(variant["weather_col"]) if variant["weather_col"] else "Demand Only"
+                            ),
+                            "What it means": variant["description"],
+                        }
+                        for variant in FORECAST_VARIANTS
+                    ]
+                )
+                st.dataframe(variant_rows, use_container_width=True, hide_index=True)
+
+            display_summary = comparison.variant_summary.rename(
+                columns={
+                    "Avg_MAPE_pct": "Avg MAPE (%)",
+                    "Avg_MAE_mw": "Avg MAE (MW)",
+                    "Avg_Peak_Error_mw": "Avg Peak Error (MW)",
+                    "Avg_Energy_Error_gwh": "Avg Energy Error (GWh)",
+                    "Peak_Time_Hit_Rate_pct": "Peak Time Hit Rate (%)",
+                }
+            )
+
+            if not display_summary.empty:
+                best_row = display_summary.iloc[0]
+                risk_level = (
+                    "Low"
+                    if best_row["Avg MAPE (%)"] < 3
+                    else "Moderate"
+                    if best_row["Avg MAPE (%)"] < 6
+                    else "High"
+                )
+                render_risk_card(
+                    "Current Best Variant",
+                    risk_level,
+                    f"{best_row['Variant']} ({best_row['Avg MAPE (%)']:.2f}% MAPE)",
+                    "This is the recent winner across the selected backtest window. Lower MAPE means more reliable average forecast accuracy.",
+                )
+
+            fig_variant_summary = plot_variant_summary_bar(comparison.variant_summary)
+            if fig_variant_summary:
+                st.plotly_chart(fig_variant_summary, use_container_width=True)
+
+            fig_variant_mape = plot_variant_mape_comparison(comparison.comparison_table)
+            if fig_variant_mape:
+                st.plotly_chart(fig_variant_mape, use_container_width=True)
+
+            fig_variant_drift = plot_variant_drift(comparison.drift_summary)
+            if fig_variant_drift:
+                st.plotly_chart(fig_variant_drift, use_container_width=True)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Variant Performance Summary")
+                st.dataframe(display_summary, use_container_width=True, hide_index=True)
+            with col2:
+                st.subheader("Drift Analysis")
+                if comparison.drift_summary.empty:
+                    st.info("Drift analysis is not available yet for the selected comparison window.")
+                else:
+                    st.dataframe(comparison.drift_summary, use_container_width=True, hide_index=True)
+                    st.caption(
+                        "How to read this: if the recent-window MAPE is meaningfully above the early-window MAPE, "
+                        "that variant is drifting worse. If it is lower, the variant is improving."
+                    )
+
+            st.subheader("Per-Day Variant Detail")
+            st.dataframe(
+                comparison.comparison_table.sort_values(["Date", "Variant"]).reset_index(drop=True),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     with registry_tab:
         st.info(

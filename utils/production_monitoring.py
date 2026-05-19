@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from utils.forecasting import build_intraday_forecast
+from utils.forecasting import build_intraday_forecast, weather_label
 
 
 ROADMAP_PHASES = [
@@ -19,8 +19,8 @@ ROADMAP_PHASES = [
     {
         "phase": "Phase 2",
         "name": "Model Governance and Observability",
-        "goal": "Version forecast logic, track model choices, and observe failures or fallbacks clearly.",
-        "outcome": "Every forecast can be explained by its inputs, settings, and quality metrics.",
+        "goal": "Version forecast logic, compare model choices, detect drift, and observe failures or fallbacks clearly.",
+        "outcome": "Every forecast can be explained by its inputs, settings, comparative quality, and recent stability trend.",
     },
     {
         "phase": "Phase 3",
@@ -37,11 +37,41 @@ ROADMAP_PHASES = [
 ]
 
 
+FORECAST_VARIANTS = [
+    {
+        "variant_id": "demand_only",
+        "variant_name": "Demand Only Baseline",
+        "weather_col": None,
+        "description": "Uses same-block demand history only, with no weather adjustment.",
+    },
+    {
+        "variant_id": "apparent_temperature",
+        "variant_name": "Weather-Aware Apparent Temperature",
+        "weather_col": "apparent_temperature",
+        "description": "Uses apparent temperature to adjust the same-block historical baseline.",
+    },
+    {
+        "variant_id": "temperature_2m",
+        "variant_name": "Weather-Aware Temperature",
+        "weather_col": "temperature_2m",
+        "description": "Uses air temperature to adjust the same-block historical baseline.",
+    },
+]
+
+
 @dataclass
 class MonitoringArtifacts:
     data_health: dict
     backtest_table: pd.DataFrame
     backtest_summary: dict
+
+
+@dataclass
+class VersionComparisonArtifacts:
+    comparison_table: pd.DataFrame
+    variant_summary: pd.DataFrame
+    drift_summary: pd.DataFrame
+    narrative: str
 
 
 def _risk_level(score: float, moderate_cutoff: float, high_cutoff: float) -> str:
@@ -231,6 +261,151 @@ def build_backtest_monitoring(
     return results_df, summary
 
 
+def build_forecast_version_comparison(
+    df: pd.DataFrame,
+    lookback_days: int = 7,
+    evaluation_days: int = 7,
+    variants: list[dict] | None = None,
+) -> VersionComparisonArtifacts:
+    if df.empty:
+        return VersionComparisonArtifacts(
+            comparison_table=pd.DataFrame(),
+            variant_summary=pd.DataFrame(),
+            drift_summary=pd.DataFrame(),
+            narrative="No data is available for version comparison.",
+        )
+
+    working_df = df.copy()
+    working_df["date"] = pd.to_datetime(working_df["date"])
+    unique_dates = sorted(working_df["date"].dt.date.unique())
+    eligible_dates = unique_dates[max(lookback_days, 5):]
+    target_dates = eligible_dates[-evaluation_days:]
+    active_variants = variants or FORECAST_VARIANTS
+
+    rows = []
+    for variant in active_variants:
+        for target_date in target_dates:
+            artifacts = build_intraday_forecast(
+                working_df,
+                target_date=target_date,
+                weather_col=variant["weather_col"],
+                lookback_days=lookback_days,
+            )
+            if artifacts is None:
+                continue
+
+            summary = artifacts.summary
+            forecast_peak_block = artifacts.profile.loc[artifacts.profile["forecast_demand"].idxmax(), "block_no"]
+            actual_peak_block = artifacts.profile.loc[artifacts.profile["demand_energy"].idxmax(), "block_no"]
+            mape_pct = round(summary["mape"] * 100, 2) if summary["mape"] == summary["mape"] else None
+
+            rows.append(
+                {
+                    "Date": pd.to_datetime(target_date),
+                    "Variant ID": variant["variant_id"],
+                    "Variant": variant["variant_name"],
+                    "Weather Signal": (
+                        weather_label(variant["weather_col"]) if variant["weather_col"] else "Demand Only"
+                    ),
+                    "MAPE (%)": mape_pct,
+                    "MAE (MW)": round(summary["mae_mw"], 0),
+                    "Peak Error (MW)": round(abs(summary["forecast_peak_mw"] - summary["actual_peak_mw"]), 0),
+                    "Energy Error (GWh)": round(abs(summary["forecast_energy_gwh"] - summary["actual_energy_gwh"]), 2),
+                    "Peak Time Hit": summary["forecast_peak_time"] == summary["actual_peak_time"],
+                    "Peak Block Error": abs(int(forecast_peak_block) - int(actual_peak_block)),
+                    "Overall Risk": summary["overall_risk_level"],
+                }
+            )
+
+    comparison_df = pd.DataFrame(rows)
+    if comparison_df.empty:
+        return VersionComparisonArtifacts(
+            comparison_table=comparison_df,
+            variant_summary=pd.DataFrame(),
+            drift_summary=pd.DataFrame(),
+            narrative="Not enough eligible forecast history is available for version comparison.",
+        )
+
+    variant_summary = (
+        comparison_df.groupby(["Variant", "Weather Signal"], as_index=False)
+        .agg(
+            Runs=("Date", "count"),
+            Avg_MAPE_pct=("MAPE (%)", "mean"),
+            Avg_MAE_mw=("MAE (MW)", "mean"),
+            Avg_Peak_Error_mw=("Peak Error (MW)", "mean"),
+            Avg_Energy_Error_gwh=("Energy Error (GWh)", "mean"),
+            Peak_Time_Hit_Rate_pct=("Peak Time Hit", lambda x: float(x.mean() * 100)),
+        )
+        .sort_values(["Avg_MAPE_pct", "Avg_MAE_mw"], ascending=[True, True])
+    )
+
+    drift_rows = []
+    for variant_name, group in comparison_df.sort_values("Date").groupby("Variant"):
+        ordered = group.dropna(subset=["MAPE (%)"]).sort_values("Date").reset_index(drop=True)
+        if ordered.empty:
+            continue
+        midpoint = max(len(ordered) // 2, 1)
+        early = ordered.iloc[:midpoint]
+        recent = ordered.iloc[midpoint:]
+        if recent.empty:
+            recent = early
+
+        early_mape = float(early["MAPE (%)"].mean())
+        recent_mape = float(recent["MAPE (%)"].mean())
+        mape_shift = recent_mape - early_mape
+        if mape_shift >= 0.5:
+            drift_status = "Worsening"
+        elif mape_shift <= -0.5:
+            drift_status = "Improving"
+        else:
+            drift_status = "Stable"
+
+        drift_rows.append(
+            {
+                "Variant": variant_name,
+                "Early Window MAPE (%)": round(early_mape, 2),
+                "Recent Window MAPE (%)": round(recent_mape, 2),
+                "MAPE Shift (pct pts)": round(mape_shift, 2),
+                "Recent MAE (MW)": round(float(recent["MAE (MW)"].mean()), 2),
+                "Recent Peak Error (MW)": round(float(recent["Peak Error (MW)"].mean()), 2),
+                "Drift Status": drift_status,
+            }
+        )
+
+    drift_df = pd.DataFrame(drift_rows).sort_values(
+        by=["MAPE Shift (pct pts)", "Recent Window MAPE (%)"],
+        ascending=[True, True],
+    ) if drift_rows else pd.DataFrame()
+
+    best_variant = variant_summary.iloc[0] if not variant_summary.empty else None
+    drift_headline = ""
+    if not drift_df.empty:
+        worsening = drift_df[drift_df["Drift Status"] == "Worsening"]["Variant"].tolist()
+        improving = drift_df[drift_df["Drift Status"] == "Improving"]["Variant"].tolist()
+        if worsening:
+            drift_headline = "Recent drift warning: " + ", ".join(worsening) + " is degrading."
+        elif improving:
+            drift_headline = "Recent drift view: " + ", ".join(improving) + " is improving."
+        else:
+            drift_headline = "Recent drift view: the tested forecast variants are broadly stable."
+
+    if best_variant is not None:
+        narrative = (
+            f"Best recent variant is {best_variant['Variant']} with average MAPE of "
+            f"{best_variant['Avg_MAPE_pct']:.2f}% across {int(best_variant['Runs'])} backtest days. "
+            f"{drift_headline}"
+        ).strip()
+    else:
+        narrative = drift_headline or "Version comparison is available, but no strong winner is visible yet."
+
+    return VersionComparisonArtifacts(
+        comparison_table=comparison_df,
+        variant_summary=variant_summary,
+        drift_summary=drift_df,
+        narrative=narrative,
+    )
+
+
 def build_monitoring_artifacts(
     scada_df: pd.DataFrame,
     merged_df: pd.DataFrame,
@@ -313,4 +488,64 @@ def plot_peak_prediction_quality(results_df: pd.DataFrame):
         template="plotly_white",
         hovermode="x unified",
     )
+    return fig
+
+
+def plot_variant_mape_comparison(comparison_df: pd.DataFrame):
+    if comparison_df.empty:
+        return None
+    fig = px.line(
+        comparison_df.sort_values("Date"),
+        x="Date",
+        y="MAPE (%)",
+        color="Variant",
+        markers=True,
+        title="Forecast Version Comparison: MAPE by Day",
+        labels={"Date": "Target Date", "MAPE (%)": "MAPE (%)"},
+    )
+    fig.add_hline(y=3, line_dash="dot", line_color="#F4A261")
+    fig.add_hline(y=6, line_dash="dot", line_color="#D62828")
+    fig.update_layout(template="plotly_white", hovermode="x unified", legend_title_text="Variant")
+    return fig
+
+
+def plot_variant_summary_bar(summary_df: pd.DataFrame):
+    if summary_df.empty:
+        return None
+    plot_df = summary_df.rename(
+        columns={
+            "Avg_MAPE_pct": "Average MAPE (%)",
+            "Peak_Time_Hit_Rate_pct": "Peak Time Hit Rate (%)",
+        }
+    )
+    fig = px.bar(
+        plot_df,
+        x="Variant",
+        y="Average MAPE (%)",
+        color="Variant",
+        text_auto=".2f",
+        title="Forecast Version Comparison: Average Error by Variant",
+    )
+    fig.update_layout(template="plotly_white", showlegend=False)
+    return fig
+
+
+def plot_variant_drift(drift_df: pd.DataFrame):
+    if drift_df.empty:
+        return None
+    plot_df = drift_df.melt(
+        id_vars=["Variant", "Drift Status"],
+        value_vars=["Early Window MAPE (%)", "Recent Window MAPE (%)"],
+        var_name="Window",
+        value_name="MAPE (%)",
+    )
+    fig = px.bar(
+        plot_df,
+        x="Variant",
+        y="MAPE (%)",
+        color="Window",
+        barmode="group",
+        title="Forecast Drift Analysis: Early vs Recent Error",
+    )
+    fig.update_layout(template="plotly_white", hovermode="x unified")
     return fig
