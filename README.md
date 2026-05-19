@@ -92,6 +92,7 @@ Detailed deployment notes are available in:
 - `docs/FORECAST_RUN_GOVERNANCE.md`
 - `docs/OPERATOR_BRIEFING_GUIDE.md`
 - `docs/DAILY_SNAPSHOT_AUTOMATION.md`
+- `docs/EXECUTION_MONITORING.md`
 
 ## Security rules for this repo
 

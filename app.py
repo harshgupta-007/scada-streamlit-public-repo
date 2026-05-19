@@ -57,6 +57,7 @@ from utils.production_monitoring import (
     plot_peak_prediction_quality,
 )
 from utils.operator_briefing import build_briefing_dataframe, build_operator_briefing
+from utils.execution_monitoring import build_execution_health_summary, load_recent_execution_events
 from utils.forecast_registry import (
     build_forecast_run_record,
     get_forecast_run_logging_mode,
@@ -524,6 +525,25 @@ def render_production_readiness():
         st.info(
             "Learning view: Streamlit is the presentation layer, not the scheduler. In production, a small external job should generate the daily snapshot and save the briefing history."
         )
+        execution_events = load_recent_execution_events(limit=20)
+        execution_health = build_execution_health_summary(execution_events, stale_hours=30)
+        render_risk_card(
+            "Automation Health",
+            execution_health["status"],
+            execution_health.get("latest_status", "Unknown"),
+            execution_health["summary"],
+        )
+        health_cols = st.columns(3)
+        health_cols[0].metric(
+            "Last Run",
+            execution_health["last_run_at"].strftime("%d %b %Y %H:%M UTC") if execution_health["last_run_at"] is not None else "Unavailable",
+        )
+        health_cols[1].metric(
+            "Last Success",
+            execution_health["last_success_at"].strftime("%d %b %Y %H:%M UTC") if execution_health["last_success_at"] is not None else "Unavailable",
+        )
+        health_cols[2].metric("Recent Failures", f"{execution_health['recent_failures']}")
+
         st.markdown(
             """
             **Recommended scheduled command**
@@ -543,6 +563,21 @@ def render_production_readiness():
         st.caption(
             "Typical production setup: run this from Windows Task Scheduler, cron, Airflow, or another job runner once per day before the operations shift."
         )
+        if not execution_events.empty:
+            st.subheader("Recent Execution Events")
+            display_cols = [
+                "started_at_utc",
+                "status",
+                "target_date",
+                "mode",
+                "overall_risk_level",
+                "message",
+                "error_message",
+            ]
+            available_cols = [col for col in display_cols if col in execution_events.columns]
+            st.dataframe(execution_events[available_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("No persisted execution events are available yet. This is expected until scheduled job persistence is enabled.")
 
 
 def render_regional():
