@@ -116,6 +116,13 @@ RISK_STYLES = {
 }
 
 
+def get_selectable_date_bounds(min_date: pd.Timestamp, max_date: pd.Timestamp) -> tuple:
+    today = pd.Timestamp.today().normalize()
+    selectable_min = min(min_date.normalize() - pd.DateOffset(years=5), pd.Timestamp("2020-01-01"))
+    selectable_max = max(max_date.normalize() + pd.DateOffset(years=5), today + pd.DateOffset(years=2))
+    return selectable_min.date(), selectable_max.date()
+
+
 def build_sidebar(df):
     if ASSET_IMAGE.exists():
         st.sidebar.image(str(ASSET_IMAGE), use_container_width=True)
@@ -135,11 +142,16 @@ def build_sidebar(df):
         return page
 
     min_date, max_date = get_date_range(df)
+    selectable_min_date, selectable_max_date = get_selectable_date_bounds(min_date, max_date)
     date_input = st.sidebar.date_input(
         "Select Date Range",
         value=(min_date.date(), max_date.date()),
-        min_value=min_date.date(),
-        max_value=max_date.date(),
+        min_value=selectable_min_date,
+        max_value=selectable_max_date,
+    )
+    st.sidebar.caption(
+        f"Historical SCADA coverage currently loaded: {min_date.date()} to {max_date.date()}. "
+        "You can still select wider dates, but pages with no matching history will show no data."
     )
 
     if isinstance(date_input, (tuple, list)):

@@ -78,6 +78,12 @@ The sidebar does three important jobs:
 - holiday exclusion
 - special event exclusion
 
+Important behavior:
+
+- the date selector is broader than the historical SCADA coverage
+- this is intentional so users can inspect future or wider calendar windows
+- if the chosen dates have no matching historical data, the relevant pages clearly show that no data is available
+
 3. Source transparency
 - tells the user whether the app is using:
   - MongoDB
