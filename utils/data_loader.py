@@ -24,7 +24,31 @@ def is_mongodb_configured() -> bool:
 
 
 def get_data_source_label() -> str:
-    return "MongoDB" if is_mongodb_configured() else "Sample CSV"
+    status = get_data_source_status()
+    return status["label"]
+
+
+def get_data_source_status() -> dict:
+    if not is_mongodb_configured():
+        return {
+            "label": "Sample CSV",
+            "mode": "sample_only",
+            "detail": "MongoDB is not configured, so the app is using approved sample CSV files.",
+        }
+
+    mongo_df = load_scada_data_from_mongodb()
+    if not mongo_df.empty:
+        return {
+            "label": "MongoDB",
+            "mode": "mongodb",
+            "detail": "SCADA data is actively loading from MongoDB.",
+        }
+
+    return {
+        "label": "Sample CSV (Mongo fallback)",
+        "mode": "fallback",
+        "detail": "MongoDB is configured, but the SCADA collection did not load usable rows, so the app fell back to sample CSV data.",
+    }
 
 
 @st.cache_resource

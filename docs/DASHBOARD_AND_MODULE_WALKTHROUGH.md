@@ -88,6 +88,12 @@ Important behavior:
 - tells the user whether the app is using:
   - MongoDB
   - sample CSV fallback
+- also shows the currently loaded row count and loaded historical coverage
+
+Important note:
+
+- the source label now reflects the actual active source
+- if MongoDB is configured but no usable rows are loaded, the sidebar explicitly shows `Sample CSV (Mongo fallback)`
 
 These filters are stored in session state and reused across multiple pages.
 

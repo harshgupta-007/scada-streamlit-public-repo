@@ -39,7 +39,7 @@ from utils.charts import (
     plot_forecast_weather_adjustment,
 )
 from utils.data_loader import DATA_FILE, filter_data_by_date, get_date_range, load_scada_data, get_merged_scada_weather
-from utils.data_loader import get_data_source_label
+from utils.data_loader import get_data_source_label, get_data_source_status
 from utils.forecasting import (
     build_intraday_forecast,
     build_live_forecast,
@@ -191,8 +191,12 @@ def build_sidebar(df):
     st.session_state["exclude_events"] = exclude_events
 
     st.sidebar.markdown("---")
-    st.sidebar.caption(f"Data source: {get_data_source_label()}")
-    st.sidebar.caption("MongoDB is used when configured; otherwise the app falls back to approved sample files.")
+    data_source_status = get_data_source_status()
+    st.sidebar.caption(f"Data source: {data_source_status['label']}")
+    st.sidebar.caption(data_source_status["detail"])
+    st.sidebar.caption(
+        f"Currently loaded SCADA rows: {len(df):,} | Loaded coverage: {min_date.date()} to {max_date.date()}"
+    )
     st.sidebar.caption("Deferred features: " + ", ".join(DEFERRED_PAGES))
 
     return page
